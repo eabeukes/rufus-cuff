@@ -431,3 +431,10 @@ Each of these cost a debugging round:
   mgmt treats as an invalid index. The probe now defers until CONSYS is there.
 - Result: `hcitool lescan` ~300 reports from 14-16 devices in 8 s, every power-on;
   `bluetoothctl scan on` finds 10 devices in 12 s through bluetoothd. Pairing not tried yet.
+- Paired with the owner's iPhone (2026-10-28): watch discoverable and pairable through
+  bluetoothd (`agent KeyboardDisplay`), the iPhone found it (as "BlueZ 5.86", bluetoothd's
+  default name; `system-alias` renames it) and started pairing; numeric comparison, the same
+  6-digit code on both. Result: bonded over BR/EDR, link `AUTH ENCRYPT`, services resolved, so
+  classic discovery and Secure Simple Pairing work as well as LE scanning. `bluetooth` is now
+  in the default runlevel, named "Rufus Cuff" (`etc/bluetooth/main.conf`); the bond is stored in
+  `/var/lib/bluetooth` on the rootfs.

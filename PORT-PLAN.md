@@ -139,7 +139,7 @@ What it took (each one cost a debugging round):
 | Audio | speaker + mic working | AGM's AFE/MT6357 machine driver, speaker amp = `simple-audio-amplifier` on GPIO 13; UCM profile `Rufus_Cuff`, `rufus-audio` service; loop test: mic hears a 1 kHz speaker tone 18 dB over silence |
 | Vibrator | working | `regulator-haptic` on VIBR (2.8 V, stock `vib_vol`); `vibrate MS`; accelerometer spread 0.5 -> 5.8 counts while it runs |
 | Accelerometer | working | BMA423 at I2C1 0x18 (chip ID 0x13), our IIO driver `port/kernel/drivers/iio/accel/bma423.c`: raw x/y/z, +-4 g, temperature |
-| Bluetooth | scans, bluetoothd sees it; pairing and BR/EDR discovery not checked | `btmt6739.c` HCI over STP type 0 through the CONSYS driver; at each power-on it replays stock's CONSYS init from the BT NVRAM (radio, TX power, sleep, address) and fixes the firmware's supported-commands table (LE octets reported as zero); MT0699, LMP 4.2 |
+| Bluetooth | scans, pairs (bonded with an iPhone over BR/EDR, encrypted); no profile used yet | `btmt6739.c` HCI over STP type 0 through the CONSYS driver; at each power-on it replays stock's CONSYS init from the BT NVRAM (radio, TX power, sleep, address) and fixes the firmware's supported-commands table (LE octets reported as zero); MT0699, LMP 4.2 |
 | Back to Android | working in both layouts | `rufus-android`: LK boot mode from `/chosen/atag,boot` (little-endian u32 size/tag/mode) picks a plain reboot or `reboot recovery` (RTC boot-mode bits, `rufus-reboot`); both tested |
 | Kid UI | working | `port/pupui/` ("Pup Rescue HQ"), OpenRC service; clock in the tower, battery with charging bolt; own pictures via `theme-push.sh` (`theme.c`) |
 | Grown-up mode | working (tested on the watch) | both buttons 3 s + a sum (`grownup.c`): Wi-Fi scan/connect/forget over wpa_supplicant's control socket, terminal (pty, VT100 subset), status, brightness; screen off -> kid mode |
@@ -181,7 +181,7 @@ firmware `MOLY.LR12A.R2.MP.V5.23.P10`.
 | Mobile data (LTE) | The AGM M7 (same SoC, modem branch LR12A.R2 V96.6) runs it on mainline: `mt6739-ccci`, `ccci-fsd` NVRAM service, a ModemManager plugin (`~/src/nixos-agm-m7`). | **Modem up and answering AT** (2026-10-28): Linux in `boot` so LK loads it, `ccci-fsd` with this watch's NVRAM, and the CCB control table plus the CCB/DHL raw features the vendor offers on MT6739 (without them the MD watchdog fired 33 s after HS2). `/dev/wwan0at0`: `+CFUN: 0`, no SIM fitted. Next: a SIM, `AT+CFUN=1`, registration, then data (ccmni) and ModemManager. |
 | SMS | Not done on mainline. | After data: AT `+CMGS`/`+CMGL` on the CCCI AT port; ModemManager does SMS on AT modems. |
 | Voice calls | Not done on mainline MT6739. | Modem PCM path plus audio. Large. |
-| Bluetooth | Scanning works 2026-10-28 (`btmt6739.c`, stock's init replayed, firmware command table fixed). | Pairing and a profile (e.g. audio or input) to test. |
+| Bluetooth | Scanning and pairing work 2026-10-28 (`btmt6739.c`, stock's init replayed, firmware command table fixed). | A profile to use: audio (A2DP, needs PipeWire/BlueALSA), or notifications from the phone. |
 | GPS | Not done. STP channel 2. | The position engine (`mnld`) is closed Android userspace; the chip gives raw data. Unlikely. |
 | Accelerometer | Done 2026-10-28: BMA423, raw IIO driver. | Step counter/tilt need Bosch's feature config blob uploaded. |
 | Heart rate | Vendor driver + closed algorithm. | Unlikely. |
