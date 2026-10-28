@@ -1,0 +1,9 @@
+# Rufus Cuff: OpenRC, plus a root shell on the USB serial gadget (ttyGS0, COMx on the PC).
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+ttyGS0::respawn:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown
+# rufus-android asked for Android in the recovery partition: reboot there, after OpenRC.
+::shutdown:/bin/sh -c '[ -e /run/reboot-recovery ] && exec /usr/local/bin/rufus-reboot recovery'

@@ -1,0 +1,519 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * Rufus Cuff (Wiite C10_DW_480X640_TFT board, MT6739 + MT6357).
+ * First-boot device tree: CPU, timers, watchdog, pstore, eMMC, USB gadget and
+ * LK's framebuffer. Built on itsvic-dev's AGM M7 tree (mt6739.dtsi, mt6357.dtsi).
+ *
+ * Left out on purpose until they are understood on this board:
+ *  - CPU frequency (regulator voltages), audio, the other radios and sensors.
+ */
+
+/dts-v1/;
+
+#include "mt6739.dtsi"
+#include "mt6357.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/iio/adc/mediatek,mt6357-auxadc.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	model = "Rufus Cuff";
+	compatible = "rufus,cuff", "mediatek,mt6739";
+
+	/*
+	 * LK edits /chosen and looks up /aliases. With an /aliases node, or with
+	 * subnodes and #address-cells in /chosen (neither is in the stock DTB), LK never
+	 * starts the kernel. Keep both shaped like stock: no /aliases, properties only.
+	 */
+	chosen {
+		bootargs = "";
+	};
+
+	/*
+	 * 2800 mAh cell. OCV table from the stock fuel-gauge profile at 25 C
+	 * (bat_gm30 battery0_profile_t1, Qmax 2729 mAh); charge voltage = stock battery_cv.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		device-chemistry = "lithium-ion";
+		voltage-min-design-microvolt = <3400000>;
+		voltage-max-design-microvolt = <4200000>;
+		charge-full-design-microamp-hours = <2729000>;
+		constant-charge-voltage-max-microvolt = <4200000>;
+		constant-charge-current-max-microamp = <550000>;
+		charge-term-current-microamp = <150000>;
+		ocv-capacity-celsius = <25>;
+		ocv-capacity-table-0 = <4179300 100>, <4120300 95>, <4074900 90>,
+				       <4034100 85>, <3985200 80>, <3958900 75>,
+				       <3929200 70>, <3901700 65>, <3874000 60>,
+				       <3835900 55>, <3808400 50>, <3793100 45>,
+				       <3780000 40>, <3772700 35>, <3766800 30>,
+				       <3754700 25>, <3738000 20>, <3715400 15>,
+				       <3684800 10>, <3676800 5>, <3484000 0>;
+	};
+
+	/*
+	 * Speaker: MT6357 line out -> external amplifier, enabled by GPIO 13 (stock pinctrl
+	 * audexamphigh/low only drives it high or low). Main mic on AIN0. AFE, codec and
+	 * machine driver are AGM's (sound/soc/mediatek/mt6739).
+	 */
+	speaker_amp: audio-amplifier {
+		compatible = "simple-audio-amplifier";
+		enable-gpios = <&pinctrl 13 GPIO_ACTIVE_HIGH>;
+		sound-name-prefix = "Speaker Amp";
+	};
+
+	sound {
+		compatible = "mediatek,mt6739-mt6357-sound";
+		model = "Rufus Cuff";
+		pinctrl-names = "default";
+		pinctrl-0 = <&aud_pins>;
+		mediatek,platform = <&afe>;
+		aux-devs = <&speaker_amp>;
+		audio-routing = "Speaker Amp INL", "Line out",
+				"Speaker", "Speaker Amp OUTL",
+				"AIN0", "Main Mic";
+
+		adda-dai-link {
+			link-name = "ADDA_BE";
+
+			codec {
+				sound-dai = <&mt6357_codec>;
+			};
+		};
+	};
+
+	/* Bluetooth on the CONSYS combo: HCI over STP (port/kernel/drivers/bluetooth/btmt6739.c). */
+	bluetooth {
+		compatible = "rufus,mt6739-bluetooth";
+	};
+
+	/* Vibration motor on the PMIC's VIBR LDO; stock vib_vol = 9 is 2.8 V in its table. */
+	vibrator {
+		compatible = "regulator-haptic";
+		haptic-supply = <&mt6357_vibr_reg>;
+		min-microvolt = <2800000>;
+		max-microvolt = <2800000>;
+	};
+
+	/*
+	 * LK sets up the ST7701S (DSI video mode, 480x640). Its vram starts at 0x7fb10000
+	 * (3 frames, reserved by LK as mblock-5-framebuffer). LK's OVL0 layers keep showing
+	 * LK's images whatever we write to them, so rdma-scanout below switches RDMA0 to
+	 * memory mode and points it at this buffer (third vram frame). The panel is natively portrait; the
+	 * watch is worn landscape with the buttons on the right, hence fbcon=rotate:3.
+	 * simpledrm binds by compatible, so this does not need to live under /chosen.
+	 */
+	simplefb: framebuffer@7fd68000 {
+		compatible = "simple-framebuffer";
+		reg = <0 0x7fd68000 0 (1920 * 640)>;
+		width = <480>;
+		height = <640>;
+		stride = <1920>;
+		format = "x8r8g8b8";
+	};
+
+	/* RDMA0 scans the simple-framebuffer directly (port/kernel/.../mt6739-rdma-scanout.c). */
+	rdma-scanout@1400b000 {
+		compatible = "rufus,mt6739-rdma-scanout";
+		reg = <0 0x1400b000 0 0x1000>, <0 0x1400a000 0 0x1000>;
+		memory-region-fb = <&simplefb>;
+	};
+
+	/* Stock aw_bl@0 "wiite,aw9364dnr": AW9364 on GPIO 85 (pin_lcm_bl_en_out). */
+	backlight {
+		compatible = "awinic,aw9364";
+		enable-gpios = <&pinctrl 85 GPIO_ACTIVE_HIGH>;
+		default-brightness = <12>;
+	};
+
+	/*
+	 * LK reads /led@0../led@6 (led@6 = LCD backlight, led_mode 4) and fails to boot
+	 * the kernel without them. Copied verbatim from the stock DTB; Linux ignores them.
+	 */
+	led@0 {
+		compatible = "mediatek,red";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@1 {
+		compatible = "mediatek,green";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@2 {
+		compatible = "mediatek,blue";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@3 {
+		compatible = "mediatek,jogball-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@4 {
+		compatible = "mediatek,keyboard-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@5 {
+		compatible = "mediatek,button-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	led@6 {
+		compatible = "mediatek,lcd-backlight";
+		led_mode = <0x04>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+
+	/* LK looks up "/memory" by exact path and rewrites it (3 GiB on this watch). */
+	memory {
+		device_type = "memory";
+		reg = <0 0x40000000 0 0x20000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * Stock (MTK 4.4) ramoops, 0x54410000 + 0xe0000, mapped from the persistent_ram
+		 * headers in RAM: 79 dump records (0x4f000), console (0x40000 at 0x5445f000,
+		 * shown as console-ramoops), a second console (0x40000 at 0x5449f000,
+		 * console-ramoops-2), ftrace (0x1000), pmsg (0x10000). Same layout as the AGM M7.
+		 * Mainline ramoops gets the dump records only; the console zone belongs to
+		 * earlycon=pstoreram, so the stock kernel shows our log as console-ramoops.
+		 */
+		ramoops@54410000 {
+			compatible = "ramoops";
+			reg = <0 0x54410000 0 0x4f000>;
+			record-size = <0x1000>;
+		};
+
+		console-ramoops@5445f000 {
+			reg = <0 0x5445f000 0 0x40000>;
+			no-map;
+		};
+
+		stock-console2-ftrace-pmsg@5449f000 {
+			reg = <0 0x5449f000 0 0x51000>;
+			no-map;
+		};
+
+		/* CONSYS (Wi-Fi/BT) shared memory, as stock consys-reserve-memory. */
+		connsys_mem: connsys-memory {
+			no-map;
+			size = <0 0x200000>;
+			alignment = <0 0x200000>;
+			alloc-ranges = <0 0x40000000 0 0x38000000>;
+		};
+
+		/*
+		 * No framebuffer reservation here: LK reserves 0x7fb10000 itself
+		 * (mblock-5-framebuffer, no-map) and does not start the kernel when
+		 * the DT already has a reservation there.
+		 */
+	};
+};
+
+&mt6357_pmic {
+	/* Stock DT: pmic-eint on EINT 182, same as the AGM M7. */
+	interrupts-extended = <&pinctrl 182 IRQ_TYPE_LEVEL_HIGH>;
+	interrupt-controller;
+	#interrupt-cells = <2>;
+
+	/*
+	 * Power key. mtk-pmic-keys writes the long-press reset config (TOP_RST_MISC 0x14c)
+	 * at probe and disables it if these properties are missing. Stock value 0x221:
+	 * power-key reset on (bit 9), home-key reset off, shortest duration -> mode 1, time 0.
+	 */
+	keys {
+		mediatek,long-press-mode = <1>;
+		power-off-time-sec = <0>;
+
+		/delete-node/ key-home;
+	};
+
+	/*
+	 * The RTC driver writes nothing at probe; Linux only reads it (RTC_HCTOSYS, no
+	 * RTC_SYSTOHC), so Android's clock handling is untouched.
+	 */
+
+	/*
+	 * Detection, fuel gauge and (rufus,charge-control) the PMIC linear charger: this board
+	 * has no external charger, stock charges with it (port/kernel/.../mt6357-charger.c).
+	 */
+	pmic_charger: charger {
+		compatible = "mediatek,mt6357-charger";
+		io-channels = <&pmic_adc MT6357_AUXADC_BATADC>,
+			      <&pmic_adc MT6357_AUXADC_BAT_TEMP>;
+		io-channel-names = "vbat", "temp";
+		monitored-battery = <&battery>;
+		rufus,charge-control;
+	};
+
+	/*
+	 * Power off through the PMIC (clear RG_PWRHOLD). PSCI SYSTEM_OFF hangs in this ATF with the
+	 * watchdog already stopped (AGM M7 notes), which would leave a sealed watch stuck on.
+	 * With USB connected the bootloader then starts offline charging.
+	 */
+	power-controller {
+		compatible = "mediatek,mt6357-pwrc";
+	};
+
+	mt6357_codec: audio-codec {
+		compatible = "mediatek,mt6357-sound";
+		vaud28-supply = <&mt6357_vaud28_reg>;
+		#sound-dai-cells = <0>;
+	};
+};
+
+&afe {
+	status = "okay";
+};
+
+/*
+ * CPU frequency scaling (mediatek-cpufreq, OPP table in mt6739.dtsi): the cores run from
+ * VPROC with VSRAM_PROC, as on the AGM M7. The table's voltages are at or above this
+ * watch's stock DVFS table (checked in Android, /proc/cpufreq).
+ */
+&cpu0 {
+	proc-supply = <&mt6357_vproc_reg>;
+	sram-supply = <&mt6357_vsram_proc_reg>;
+};
+
+&cpu1 {
+	proc-supply = <&mt6357_vproc_reg>;
+	sram-supply = <&mt6357_vsram_proc_reg>;
+};
+
+&cpu2 {
+	proc-supply = <&mt6357_vproc_reg>;
+	sram-supply = <&mt6357_vsram_proc_reg>;
+};
+
+&cpu3 {
+	proc-supply = <&mt6357_vproc_reg>;
+	sram-supply = <&mt6357_vsram_proc_reg>;
+};
+
+/*
+ * Modem (MD1): LK loads and maps it in a normal boot only, so this needs Linux in the boot
+ * partition. Driver: AGM's mt6739-ccci (power-on, handshakes, CLDMA, AT port, wwan0).
+ */
+&modem {
+	vmodem-supply = <&mt6357_vmodem_reg>;
+	status = "okay";
+};
+
+/* The vendor CPU DVFS limits (as on the AGM M7): no OPP can ask for more. */
+&mt6357_vproc_reg {
+	regulator-min-microvolt = <950000>;
+	regulator-max-microvolt = <1306250>;
+};
+
+&mt6357_vsram_proc_reg {
+	regulator-min-microvolt = <1150000>;
+	regulator-max-microvolt = <1312500>;
+};
+
+/*
+ * "reboot recovery" / "reboot bootloader": LK's boot-mode bits in RTC_PDN1 (spare bits,
+ * not the clock; LK clears them after use). rufus-android uses this when Android is in
+ * the recovery partition.
+ */
+&mt6357_rtc {
+	mode-recovery = <0x10>;
+	mode-bootloader = <0x2000>;
+};
+
+/* Same always-on set as the AGM M7 (DRAM, IO, USB PHY, XO). */
+&mt6357_vdram_reg {
+	regulator-always-on;
+};
+
+&mt6357_vio28_reg {
+	regulator-always-on;
+};
+
+&mt6357_vusb33_reg {
+	regulator-always-on;
+};
+
+&mt6357_vxo22_reg {
+	regulator-always-on;
+};
+
+/*
+ * Wi-Fi: CONSYS power-up and the vendor gen2 driver from the AGM M7 tree. Firmware and
+ * this watch's NVRAM (calibration, MAC) come from its own /system/vendor/firmware and
+ * /nvdata, packed into the initramfs (port/firmware, not redistributable).
+ */
+&connsys {
+	memory-region = <&connsys_mem>;
+	vcn18-supply = <&mt6357_vcn18_reg>;
+	vcn28-supply = <&mt6357_vcn28_reg>;
+	vcn33-bt-supply = <&mt6357_vcn33_bt_reg>;
+	vcn33-wifi-supply = <&mt6357_vcn33_wifi_reg>;
+	status = "okay";
+};
+
+&connsys_wifi {
+	status = "okay";
+};
+
+/* Touch controller supply (stock "VTOUCH-supply"). */
+&mt6357_vldo28_reg {
+	regulator-always-on;
+};
+
+/*
+ * Stock lists a "sw_charger" at 0x6a and sensors at their vendor placeholder addresses;
+ * only 0x18 answers: the BMA423 accelerometer (chip ID 0x13).
+ */
+&ap_i2c1 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	accelerometer@18 {
+		compatible = "bosch,bma423";
+		reg = <0x18>;
+	};
+};
+
+&ap_i2c0 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/*
+	 * Hynitron touch (stock hyn_ts, CONFIG_TOUCHSCREEN_MTK_CTS0XX). The stock DT says 0x5d,
+	 * but the chip answers at 0x38 with a FocalTech FT5x06 register map (0x02 touch count,
+	 * 0x03.. points, 0xa6 firmware 0x14), so edt-ft5x06 drives it, as on the AGM M7.
+	 * INT GPIO 6, reset GPIO 119, supply vldo28: all from the stock DT.
+	 */
+	touchscreen@38 {
+		compatible = "focaltech,ft6236";
+		reg = <0x38>;
+		/*
+		 * Raw coordinates are panel-native portrait (x 0..480, y 0..640). Measured with
+		 * the watch worn buttons-right: top-left (426,58), top-right (426,622), bottom-right
+		 * (14,626), bottom-left (28,48). Invert x, then swap, so userspace gets what the
+		 * wearer sees: 640x480 landscape, origin top-left.
+		 */
+		touchscreen-size-x = <480>;
+		touchscreen-size-y = <640>;
+		touchscreen-inverted-x;
+		touchscreen-swapped-x-y;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_pins>;
+		interrupts-extended = <&pinctrl 6 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&pinctrl 119 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/* Second button: stock kpd-hw-init-map has KEY_BACK at hardware index 0 (row 0, col 0). */
+&keyboard {
+	keypad,num-rows = <8>;
+	keypad,num-columns = <9>;
+	linux,keymap = <MATRIX_KEY(0, 0, KEY_BACK)>;
+	status = "okay";
+};
+
+&mmc0 {
+	pinctrl-names = "default", "state_uhs";
+	pinctrl-0 = <&mmc0_pins>;
+	pinctrl-1 = <&mmc0_pins>;
+	bus-width = <8>;
+	max-frequency = <200000000>;
+	vmmc-supply = <&mt6357_vemc_reg>;
+	cap-mmc-highspeed;
+	mmc-hs200-1_8v;
+	non-removable;
+	no-sd;
+	no-sdio;
+	status = "okay";
+};
+
+&pinctrl {
+	/* AP <-> MT6357 audio interface (same pins as stock aud_dat_mosi/miso_on). */
+	aud_pins: aud-pins {
+		pins {
+			pinmux = <PINMUX_GPIO62__FUNC_AUD_SYNC_MOSI>,
+				 <PINMUX_GPIO63__FUNC_AUD_DAT_MOSI0>,
+				 <PINMUX_GPIO64__FUNC_AUD_DAT_MOSI1>,
+				 <PINMUX_GPIO65__FUNC_AUD_CLK_MOSI>,
+				 <PINMUX_GPIO66__FUNC_AUD_SYNC_MISO>,
+				 <PINMUX_GPIO67__FUNC_AUD_DAT_MISO0>,
+				 <PINMUX_GPIO68__FUNC_AUD_DAT_MISO1>,
+				 <PINMUX_GPIO69__FUNC_AUD_CLK_MISO>;
+		};
+	};
+
+	touch_pins: touch-pins {
+		pins-int {
+			pinmux = <PINMUX_GPIO6__FUNC_GPIO6>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+
+	/* MSDC0 pins are fixed by the SoC; copied from the AGM M7. */
+	mmc0_pins: mmc0-pins {
+		pins-cmd-dat {
+			pinmux = <PINMUX_GPIO38__FUNC_MSDC0_CMD>,
+				 <PINMUX_GPIO41__FUNC_MSDC0_DAT0>,
+				 <PINMUX_GPIO42__FUNC_MSDC0_DAT1>,
+				 <PINMUX_GPIO43__FUNC_MSDC0_DAT2>,
+				 <PINMUX_GPIO44__FUNC_MSDC0_DAT3>,
+				 <PINMUX_GPIO45__FUNC_MSDC0_DAT4>,
+				 <PINMUX_GPIO46__FUNC_MSDC0_DAT5>,
+				 <PINMUX_GPIO47__FUNC_MSDC0_DAT6>,
+				 <PINMUX_GPIO48__FUNC_MSDC0_DAT7>;
+			input-enable;
+			drive-strength = <4>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_01>;
+		};
+
+		pins-clk-dsl {
+			pinmux = <PINMUX_GPIO40__FUNC_MSDC0_CLK>,
+				 <PINMUX_GPIO39__FUNC_MSDC0_DSL>;
+			drive-strength = <4>;
+			bias-pull-down = <MTK_PUPD_SET_R1R0_10>;
+		};
+
+		pins-rst {
+			pinmux = <PINMUX_GPIO49__FUNC_MSDC0_RSTB>;
+			drive-strength = <4>;
+		};
+	};
+};
+
+&u2phy {
+	status = "okay";
+};
+
+&usb {
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&watchdog {
+	mediatek,lk-normal-restart;
+};

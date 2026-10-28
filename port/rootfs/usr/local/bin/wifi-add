@@ -1,0 +1,5 @@
+#!/bin/sh
+# wifi-add "SSID" "password": save a network and connect to it.
+[ $# -eq 2 ] || { echo 'usage: wifi-add "SSID" "password"'; exit 2; }
+wpa_passphrase "$1" "$2" | grep -v '^\s*#psk=' >> /etc/wpa_supplicant/wpa_supplicant.conf || exit 1
+wpa_cli -i wlan0 reconfigure > /dev/null && echo "saved; connecting to $1"

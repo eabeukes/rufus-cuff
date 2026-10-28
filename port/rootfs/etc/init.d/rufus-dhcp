@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# DHCP on wlan0, retrying forever: gets a lease whenever wpa_supplicant associates.
+description="DHCP client on wlan0"
+supervisor=supervise-daemon
+command=/sbin/udhcpc
+command_args="-i wlan0 -f -R -t 0 -A 10 -x hostname:rufus-cuff"
+
+depend() {
+	need wpa_supplicant
+	provide net
+}

@@ -1,0 +1,42 @@
+	led@0 {
+		compatible = "mediatek,red";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@1 {
+		compatible = "mediatek,green";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@2 {
+		compatible = "mediatek,blue";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@3 {
+		compatible = "mediatek,jogball-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@4 {
+		compatible = "mediatek,keyboard-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@5 {
+		compatible = "mediatek,button-backlight";
+		led_mode = <0x00>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};
+	led@6 {
+		compatible = "mediatek,lcd-backlight";
+		led_mode = <0x04>;
+		data = <0x01>;
+		pwm_config = <0x00 0x00 0x00 0x00 0x00>;
+	};

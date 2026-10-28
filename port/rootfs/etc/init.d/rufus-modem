@@ -1,0 +1,53 @@
+#!/sbin/openrc-run
+# The modem (MD1, loaded by LK in a normal boot): its NVRAM file service, then power-on.
+# The modem reads and writes its NVRAM through /dev/ccci_fs (ccci-fsd). It works on a copy in
+# /var/lib/ccci-fs, made once from Android's nvdata and protect partitions mounted read-only;
+# Android's partitions are never written. The copy holds this watch's IMEI: keep it private.
+description="Modem NVRAM service and power-on"
+supervisor=supervise-daemon
+command=/usr/local/bin/ccci-fsd
+command_args="/dev/ccci_fs /var/lib/ccci-fs/data"
+output_log=/var/log/ccci-fsd.log
+error_log=/var/log/ccci-fsd.log
+data=/var/lib/ccci-fs/data
+state=/sys/bus/platform/devices/10014000.modem/state
+
+depend() {
+	need localmount
+	before rufus-ui
+}
+
+# PARTNAME -> /dev node
+part() {
+	d=$(grep -l "^PARTNAME=$1$" /sys/class/block/*/uevent 2> /dev/null | head -1)
+	[ -n "$d" ] && echo "/dev/$(basename "$(dirname "$d")")"
+}
+
+# One Android partition, read-only and without journal replay, copied below $data.
+copy_from() {
+	dev=$(part "$1") || return 1
+	mkdir -p /run/ccci-src && mount -t ext4 -o ro,noload "$dev" /run/ccci-src || return 1
+	shift
+	ok=0
+	while [ $# -ge 2 ]; do
+		mkdir -p "$data/$2" && cp -a "/run/ccci-src/$1" "$data/$2/" || ok=1
+		shift 2
+	done
+	umount /run/ccci-src
+	return $ok
+}
+
+start_pre() {
+	[ -e /dev/ccci_fs ] || { eerror "no modem (Linux must be in the boot partition)"; return 1; }
+	[ -d "$data/nvdata/md/NVRAM" ] && return 0
+	ebegin "Copying the modem NVRAM from Android's partitions (once)"
+	mkdir -p -m 0700 "$data"
+	copy_from nvdata md nvdata md_cmn nvdata &&
+		copy_from protect1 md protect_f &&
+		copy_from protect2 md protect_s
+	eend $?
+}
+
+start_post() {
+	echo 1 > "$state"
+}

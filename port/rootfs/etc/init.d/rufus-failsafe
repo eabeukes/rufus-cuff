@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Optional: go back to Android after ANDROID_AFTER seconds (/etc/rufus.conf), unless
+# /run/stay exists by then.
+description="Return to Android after a timeout"
+
+start() {
+	. /etc/rufus.conf
+	[ "${ANDROID_AFTER:-0}" -gt 0 ] || return 0
+	ebegin "Back to Android in ${ANDROID_AFTER}s unless /run/stay exists"
+	( sleep "$ANDROID_AFTER"; [ -e /run/stay ] || rufus-android ) > /dev/null 2>&1 &
+	eend 0
+}

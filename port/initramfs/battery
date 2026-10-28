@@ -1,0 +1,13 @@
+#!/bin/sh
+# Battery voltage from the MT6357 AUXADC (bat_adc), and a rough open-circuit percentage.
+# Read-only: no charger control. While charging the voltage reads high.
+d=$(dirname "$(grep -lx MT6357 /sys/bus/iio/devices/*/name 2>/dev/null | head -1)")
+raw=$(cat $d/in_resistance0_raw 2>/dev/null) || { echo "no auxadc"; exit 1; }
+mv=$(awk -v r="$raw" -v s="$(cat $d/in_resistance0_scale)" 'BEGIN { printf "%d", r * s }')
+# Typical Li-ion OCV curve, 3.40 V = 0 %, 4.20 V = 100 %.
+pct=$(awk -v v="$mv" 'BEGIN {
+	n = split("3400 3600 3700 3750 3790 3830 3870 3920 3980 4060 4200", t, " ")
+	if (v <= t[1]) { print 0; exit } if (v >= t[n]) { print 100; exit }
+	for (i = 2; i <= n; i++) if (v < t[i]) { printf "%d", (i - 2) * 10 + (v - t[i-1]) * 10 / (t[i] - t[i-1]); exit }
+}')
+echo "${mv} mV ${pct}%"

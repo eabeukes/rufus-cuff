@@ -1,0 +1,14 @@
+#!/bin/sh
+# Before the battery runs flat: reboot to Android, which shuts down cleanly at low battery.
+# (Linux's PMIC power-off is in the kernel but not tested on this watch yet.)
+B=/sys/class/power_supply
+while sleep 60; do
+	[ "$(cat $B/mt6357-charger/online 2>/dev/null)" = 1 ] && continue
+	mv=$(( $(cat $B/battery/voltage_now) / 1000 ))
+	pct=$(cat $B/battery/capacity 2>/dev/null || echo 100)
+	if [ "$pct" -le 3 ] || [ "$mv" -lt 3450 ]; then
+		logger -t rufus-battery "battery low ($pct%, $mv mV): rebooting to Android"
+		rufus-android
+		exit 0
+	fi
+done

@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# The MT6357 RTC keeps good time but Linux reads the wrong date from it (Android keeps its
+# own offset too). System time = RTC + saved offset; the offset is saved again at shutdown
+# once chrony has synced. Linux never writes the RTC.
+description="Set the clock from the RTC and the saved offset"
+OFFSET=/var/lib/rufus/rtc-offset
+
+depend() {
+	provide clock
+	before chronyd
+}
+
+start() {
+	ebegin "Setting the clock from the RTC"
+	rtc=$(cat /sys/class/rtc/rtc0/since_epoch 2>/dev/null) && off=$(cat $OFFSET) &&
+		date -u -s "@$((rtc + off))" > /dev/null
+	eend $?
+}
+
+stop() {
+	if chronyc -n tracking 2>/dev/null | grep -q "^Leap status *: Normal"; then
+		ebegin "Saving the RTC offset"
+		echo $(( $(date +%s) - $(cat /sys/class/rtc/rtc0/since_epoch) )) > $OFFSET
+		eend $?
+	fi
+}

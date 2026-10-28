@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# The vendor Wi-Fi driver starts when told to (mt6739_wlan.autostart=0 on the command
+# line; the initramfs normally did it already, with the firmware it carries).
+description="Power up Wi-Fi (wlan0)"
+
+start() {
+	ebegin "Starting Wi-Fi"
+	echo 1 > /sys/module/mt6739_wlan/parameters/wlan_on 2>/dev/null
+	i=0
+	while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
+	ip link set wlan0 up
+	eend $?
+}

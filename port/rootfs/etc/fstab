@@ -1,0 +1,3 @@
+# The root filesystem (/dev/dm-0, mapped from Android's /data/linux/rootfs.img) is mounted
+# read-write by the initramfs. Android's own partitions are never mounted here.
+tmpfs	/tmp	tmpfs	nosuid,nodev,size=64m	0 0

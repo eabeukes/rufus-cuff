@@ -1,0 +1,14 @@
+#!/bin/sh
+# Reboot to Android, wherever it lives. LK tells us how it started Linux (/chosen/atag,boot:
+# u32 size, tag, mode, little-endian; mode 2 = recovery): Linux in "recovery" means Android
+# is in "boot" (a plain reboot); Linux in "boot" means Android is in "recovery" (reboot into
+# recovery). OpenRC shuts down cleanly first; inittab's last shutdown step does the
+# recovery reboot.
+mode=$(od -An -tu1 -j8 -N1 /proc/device-tree/chosen/atag,boot 2> /dev/null | tr -d ' ')
+if [ "$mode" = 2 ]; then
+	rm -f /run/reboot-recovery
+else
+	touch /run/reboot-recovery
+fi
+logger -t rufus-android "rebooting to Android (LK boot mode ${mode:-?})"
+kill -TERM 1

@@ -1,0 +1,27 @@
+#!/bin/sh
+# The grown-up desktop: Sxmo (sway) as user rufus. pupui's grown-up mode (Desktop) runs
+# this in place of itself; when the session ends (Sxmo's power menu > Logout, or the
+# screen turning off), pupui's supervisor starts the kid UI again.
+exec > /var/log/rufus-desktop.log 2>&1
+echo "desktop starting at $(date)"
+rc-service seatd status > /dev/null 2>&1 || rc-service seatd start
+dir=/run/user/$(id -u rufus)
+mkdir -p "$dir" && chown rufus:rufus "$dir" && chmod 700 "$dir"
+# No GPU driver: wlroots draws with pixman on the CPU into simpledrm's buffer.
+su -l rufus -c "export XDG_RUNTIME_DIR=$dir WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1 LIBSEAT_BACKEND=seatd
+	exec sxmo_swayinit.sh" &
+session=$!
+# Kid safety: once Sxmo locks or the screen goes off (power button or idle), end the
+# session so the watch wakes in the kid UI, as with pupui's grown-up mode. Sxmo has no
+# PIN on its lock. It keeps its state here.
+while kill -0 $session 2> /dev/null; do
+	case "$(cat "$dir/sxmo.state" 2> /dev/null)" in
+	lock | screenoff)
+		echo "locked or screen off: ending the desktop"
+		pkill -TERM -u rufus -x sway
+		;;
+	esac
+	sleep 1
+done
+wait $session
+echo "desktop ended ($?) at $(date)"

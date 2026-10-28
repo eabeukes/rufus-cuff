@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Read-only SP Flash Tool test: read back loader_ext1 (64 KiB), para (512 KiB), boot_para (1 MiB). No write commands. -->
+<flashtool-config version="2.0">
+    <general>
+        <chip-name>MT6739</chip-name>
+        <storage-type>EMMC</storage-type>
+        <download-agent>.\MTK_AllInOne_DA.bin</download-agent>
+        <scatter></scatter>
+        <authentication></authentication>
+        <certification></certification>
+        <rom-list></rom-list>
+        <connection type="BromUSB" high-speed="true" power="AutoDetect" timeout-count="3600000" com-port="" />
+    </general>
+    <commands>
+        <readback-withoutscatter>
+            <readback-list>
+                <readback-rom-item readback-partion="loader_ext1">C:\Github\rufus-cuff\tools\rb-test\loader_ext1.img</readback-rom-item>
+                <readback-rom-item readback-partion="para">C:\Github\rufus-cuff\tools\rb-test\para.img</readback-rom-item>
+                <readback-rom-item readback-partion="boot_para">C:\Github\rufus-cuff\tools\rb-test\boot_para.img</readback-rom-item>
+            </readback-list>
+        </readback-withoutscatter>
+    </commands>
+</flashtool-config>

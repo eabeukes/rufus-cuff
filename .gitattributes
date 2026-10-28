@@ -1,0 +1,4 @@
+# Keep LF everywhere: the scripts run in WSL/bash and on the watch.
+* text=auto eol=lf
+*.png binary
+*.ps1 text eol=lf

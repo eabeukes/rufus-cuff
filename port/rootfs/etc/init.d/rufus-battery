@@ -1,0 +1,4 @@
+#!/sbin/openrc-run
+description="Reboot to Android before the battery runs flat"
+supervisor=supervise-daemon
+command=/usr/local/bin/rufus-battery-watch

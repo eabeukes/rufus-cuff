@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# Route the sound card to the speaker and the main mic (UCM profile in
+# /usr/share/alsa/ucm2/Rufus_Cuff), so plain ALSA programs work: aplay, arecord.
+description="Speaker and microphone routing"
+
+depend() {
+	after udev-settle
+}
+
+start() {
+	ebegin "Routing audio to the speaker and mic"
+	alsaucm -c hw:0 reset > /dev/null 2>&1
+	alsaucm -c hw:0 set _verb HiFi set _enadev Speaker set _enadev Mic > /dev/null
+	eend $?
+}

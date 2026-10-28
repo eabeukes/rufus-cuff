@@ -1,0 +1,2 @@
+# Keys only (/root/.ssh/authorized_keys); no password logins.
+DROPBEAR_OPTS="-s -g"
