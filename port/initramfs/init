@@ -88,6 +88,17 @@ boot_rootfs() {
 	# The theme follows /data/linux/theme: removing that folder removes the theme.
 	rm -rf /newroot/var/lib/rufus/theme
 	[ -d /tmp/theme ] && cp -r /tmp/theme /newroot/var/lib/rufus/theme
+	# The clock before OpenRC runs: the kernel reads the RTC 60 years ahead, and anything
+	# OpenRC dated then looked newer than every later file (its dependency cache in
+	# /var/cache/rc was never rebuilt, so services added later never started). RTC + the
+	# saved offset, as rufus-clock does; then drop any OpenRC cache dated in the future.
+	rtc=$(cat /sys/class/rtc/rtc0/since_epoch 2>/dev/null)
+	off=$(cat /newroot/var/lib/rufus/rtc-offset 2>/dev/null)
+	if [ -n "$rtc" ] && [ -n "$off" ] && date -u -s "@$((rtc + off))" > /dev/null; then
+		log "clock: $(date -u '+%F %T') UTC"
+		touch /tmp/now
+		find /newroot/var/cache/rc -type f -newer /tmp/now -exec rm -f {} \; 2>/dev/null
+	fi
 	log "rootfs: $dev ($(($(wc -l < /tmp/rootfs.map) - 1)) extents), switching root"
 	for d in dev proc sys; do mount --move /$d /newroot/$d; done
 	return 0

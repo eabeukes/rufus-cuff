@@ -513,3 +513,17 @@ Each of these cost a debugging round:
   30 ms frame gap and then waited in poll() for the next event, up to 500 ms when nothing
   animates; the finger-up that ends a swipe often came inside the gap. With the poll timeout cut
   to the rest of the gap when a redraw is pending: 16 of 16 swipes in 10-20 ms.
+- rufus-ancs did not start after a reboot (so no advertising: nRF Connect could not see the
+  watch). OpenRC restores its dependency cache from `/var/cache/rc` at boot and rebuilds it only
+  when a service file is newer. The cache there was dated 2086-10-27: written in a boot while
+  the system clock still had the kernel's RTC reading (60 years ahead), before rufus-clock set
+  it. Nothing can be newer than that, so every later boot used a cache from before rufus-ancs
+  existed. Fix: the initramfs sets the clock (RTC + `/var/lib/rufus/rtc-offset`, as rufus-clock
+  does) before switch_root and deletes OpenRC cache files dated in the future. After a reboot:
+  clock right at 2.7 s, the cache rebuilt with 2026 dates, rufus-ancs started at boot and the
+  iPhone reconnected by itself.
+- The other report, "connects, then kicks out": an HCI capture showed the iPhone starting a new
+  pairing each time (it had forgotten the bond; the watch still had it) and the watch refusing
+  it with SMP "pairing not supported" (0x05), because pairing is only open from Quick settings >
+  Pair iPhone. Re-paired that way; notifications work again. The refusal happens in the kernel
+  (not bondable), so rufus-ancs is not asked and cannot show a hint yet.
