@@ -10,11 +10,17 @@
   Control Point, one request at a time.
 - Keeps the current notifications in STATE (JSON) and STATE_TXT (for the C UI), rewritten on
   every change, and buzzes for new ones.
-- Commands on CTL (a FIFO, one per line): "pair", "positive UID", "negative UID".
+- Apple Media Service (AMS): registers for the player state and the track, keeps them in
+  MEDIA_TXT, and sends remote commands (play/pause, next, previous, volume).
+- Current Time Service (CTS): sets the clock from the iPhone (when more than 2 s off) and saves
+  the RTC offset, so the time survives reboots without Wi-Fi.
+- Commands on CTL (a FIFO, one per line): "pair", "positive UID", "negative UID",
+  "media play|pause|toggle|next|prev|volup|voldown".
 
 Talks to bluetoothd over the system D-Bus with jeepney (pure Python, in the rootfs). The
 main loop handles bluetoothd's calls to us (advertisement, agent), signals and replies.
 """
+import calendar
 import errno
 import itertools
 import json
@@ -35,10 +41,26 @@ ANCS = '7905f431-b5ce-4e99-a40f-4b1e122d00d0'
 NOTIFICATION_SOURCE = '9fbf120d-6301-42d9-8c58-25e699a21dbd'
 CONTROL_POINT = '69d1d8f3-45e1-49a8-9821-9bbdfdaad9d9'
 DATA_SOURCE = '22eac6e9-24d6-4bb5-be44-b36ace7c7bfb'
+AMS = '89d3502b-0f36-433a-8ef4-c502ad55f8dc'
+REMOTE_COMMAND = '9b3c81d8-57b1-4a8a-b8df-0e56f7ca51c2'
+ENTITY_UPDATE = '2f7cabce-808d-411f-9a0c-bb92ba96c102'
+CTS = '00001805-0000-1000-8000-00805f9b34fb'
+CURRENT_TIME = '00002a2b-0000-1000-8000-00805f9b34fb'
+LOCAL_TIME_INFO = '00002a0f-0000-1000-8000-00805f9b34fb'
+# AMS remote command IDs, and the entity attributes we register for.
+MEDIA_COMMANDS = {'play': 0, 'pause': 1, 'toggle': 2, 'next': 3, 'prev': 4, 'volup': 5,
+                  'voldown': 6}
+AMS_PLAYER, AMS_TRACK = 0, 2
+AMS_FIELDS = {(AMS_PLAYER, 0): 'player', (AMS_PLAYER, 1): 'playback', (AMS_PLAYER, 2): 'volume',
+              (AMS_TRACK, 0): 'artist', (AMS_TRACK, 1): 'album', (AMS_TRACK, 2): 'title',
+              (AMS_TRACK, 3): 'duration'}
 
 RUN = '/run/rufus'
 STATE = RUN + '/notifications.json'
 STATE_TXT = RUN + '/notifications.txt'
+MEDIA_TXT = RUN + '/media.txt'
+RTC = '/sys/class/rtc/rtc0/since_epoch'
+RTC_OFFSET = '/var/lib/rufus/rtc-offset'                 # rufus-clock and the initramfs read it
 ASCII_PUNCT = str.maketrans({'\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
                              '\u2013': '-', '\u2014': '-', '\u2026': '...', '\u00a0': ' ',
                              '\u2022': '*'})
@@ -75,6 +97,11 @@ class Ancs:
         self.serial = itertools.count(1000)
         self.pending = {}            # serial -> callback(reply message)
         self.chars = None            # {uuid: path} of the connected iPhone's ANCS
+        self.ams = None              # the same for AMS, if the iPhone offers it
+        self.cts = None              # and for CTS
+        self.cts_offset = None       # the iPhone's time zone + DST, seconds
+        self.cts_next = 0            # when to read the iPhone's clock again
+        self.media = {}              # AMS field -> text
         self.notes = {}              # uid -> notification dict
         self.apps = {}               # app identifier -> display name
         self.requests = []           # Control Point commands waiting their turn
@@ -166,17 +193,19 @@ class Ancs:
                     cb=lambda m: self.found_objects(m.body[0]))
 
     def found_objects(self, objs):
-        if self.chars:
-            return
-        for svc, ifs in objs.items():
-            if ifs.get('org.bluez.GattService1', {}).get('UUID', ('', ''))[1] != ANCS:
-                continue
-            chars = {i['org.bluez.GattCharacteristic1']['UUID'][1]: p
-                     for p, i in objs.items()
-                     if p.startswith(svc + '/') and 'org.bluez.GattCharacteristic1' in i}
-            if all(u in chars for u in (NOTIFICATION_SOURCE, CONTROL_POINT, DATA_SOURCE)):
+        if not self.chars:
+            chars = find_service(objs, ANCS, (NOTIFICATION_SOURCE, CONTROL_POINT, DATA_SOURCE))
+            if chars:
                 self.subscribe(chars)
-                return
+        if not self.ams:
+            ams = find_service(objs, AMS, (REMOTE_COMMAND, ENTITY_UPDATE))
+            if ams:
+                self.ams_subscribe(ams)
+        if not self.cts:
+            cts = find_service(objs, CTS, (CURRENT_TIME,))
+            if cts:
+                self.cts = cts
+                self.cts_read()
 
     def subscribe(self, chars):
         self.chars = chars
@@ -195,7 +224,7 @@ class Ancs:
         if path == ADV_PATH and member == 'GetAll':
             self.reply(msg, 'a{sv}', ({
                 'Type': ('s', 'peripheral'),
-                'SolicitUUIDs': ('as', [ANCS]),
+                'SolicitUUIDs': ('as', [ANCS, AMS]),
                 'LocalName': ('s', NAME),
                 'Discoverable': ('b', True),
             },))
@@ -223,37 +252,46 @@ class Ancs:
         member = msg.header.fields.get(HeaderFields.member)
         path = msg.header.fields.get(HeaderFields.path)
         if member == 'NameOwnerChanged':
-            self.chars = None
-            self.notes.clear()
-            self.save()
+            self.forget_phone()
             self.registered = False
             if msg.body[2]:
                 log('bluetoothd (re)started')
             return
         if member == 'InterfacesAdded':
-            if not self.chars and 'org.bluez.GattCharacteristic1' in msg.body[1]:
+            if not (self.chars and self.ams and self.cts) and \
+                    'org.bluez.GattCharacteristic1' in msg.body[1]:
                 self.look_for_ancs()
             return
         if member != 'PropertiesChanged':                 # e.g. the bus's NameAcquired
             return
         iface, changed, _ = msg.body
         if iface == 'org.bluez.Device1':
-            if changed.get('ServicesResolved', ('b', False))[1] and not self.chars:
+            if changed.get('ServicesResolved', ('b', False))[1]:
                 self.look_for_ancs()
             if changed.get('Connected', ('b', True))[1] is False and self.chars \
                     and self.chars[NOTIFICATION_SOURCE].startswith(path + '/'):
                 log('iPhone disconnected')
-                self.chars = None
-                self.notes.clear()
-                self.save()
+                self.forget_phone()
                 if not self.adv_ok:
                     self.advertise()
-        elif iface == 'org.bluez.GattCharacteristic1' and 'Value' in changed and self.chars:
+        elif iface == 'org.bluez.GattCharacteristic1' and 'Value' in changed:
             value = bytes(changed['Value'][1])
-            if path == self.chars[NOTIFICATION_SOURCE]:
+            if self.chars and path == self.chars[NOTIFICATION_SOURCE]:
                 self.notification_event(value)
-            elif path == self.chars[DATA_SOURCE]:
+            elif self.chars and path == self.chars[DATA_SOURCE]:
                 self.data_source(value)
+            elif self.ams and path == self.ams[ENTITY_UPDATE]:
+                self.entity_update(value)
+            elif self.cts and path == self.cts[CURRENT_TIME]:
+                self.cts_value(value)
+
+    def forget_phone(self):
+        self.chars = self.ams = self.cts = None
+        self.cts_offset = None
+        self.notes.clear()
+        self.media.clear()
+        self.save()
+        self.save_media()
 
     # --- ANCS -------------------------------------------------------------------------------
     def notification_event(self, value):
@@ -325,6 +363,82 @@ class Ancs:
         if self.chars and uid in self.notes:
             self.request(struct.pack('<BIB', 2, uid, 0 if positive else 1))
 
+    # --- AMS: the iPhone's media player -----------------------------------------------------
+    def ams_subscribe(self, chars):
+        self.ams = chars
+        self.media.clear()
+        self.method(chars[ENTITY_UPDATE], 'org.bluez.GattCharacteristic1', 'StartNotify',
+                    cb=lambda m: self.ams_register())
+        log('AMS subscribed')
+
+    def ams_register(self):
+        """Player: name, playback info, volume. Track: artist, album, title, duration."""
+        if not self.ams:
+            return
+        for entity, attrs in ((AMS_PLAYER, (0, 1, 2)), (AMS_TRACK, (0, 1, 2, 3))):
+            self.method(self.ams[ENTITY_UPDATE], 'org.bluez.GattCharacteristic1', 'WriteValue',
+                        'aya{sv}', (bytes((entity,) + attrs), {}))
+
+    def entity_update(self, value):
+        """EntityID, AttributeID, EntityUpdateFlags, then the value (UTF-8, maybe truncated)."""
+        if len(value) < 3:
+            return
+        field = AMS_FIELDS.get((value[0], value[1]))
+        if field:
+            self.media[field] = value[3:].decode('utf-8', 'replace')
+            self.save_media()
+
+    def media_command(self, name):
+        if self.ams and name in MEDIA_COMMANDS:
+            self.method(self.ams[REMOTE_COMMAND], 'org.bluez.GattCharacteristic1', 'WriteValue',
+                        'aya{sv}', (bytes((MEDIA_COMMANDS[name],)), {}))
+
+    def save_media(self):
+        """MEDIA_TXT: "connected 0|1", then field<TAB>value lines (ASCII, as STATE_TXT).
+        playback is "state,rate,elapsed": state 0 paused, 1 playing, 2 rewinding, 3 forward."""
+        lines = ['connected %d' % bool(self.ams)]
+        lines += ['%s\t%s' % (k, clean(v)) for k, v in sorted(self.media.items())]
+        write_file(MEDIA_TXT, '\n'.join(lines) + '\n')
+
+    # --- CTS: the iPhone's clock -------------------------------------------------------------
+    def cts_read(self):
+        gatt = 'org.bluez.GattCharacteristic1'
+        if LOCAL_TIME_INFO in self.cts:
+            self.method(self.cts[LOCAL_TIME_INFO], gatt, 'ReadValue', 'a{sv}', ({},),
+                        cb=lambda m: self.cts_zone(bytes(m.body[0])))
+        self.method(self.cts[CURRENT_TIME], gatt, 'ReadValue', 'a{sv}', ({},),
+                    cb=lambda m: self.cts_value(bytes(m.body[0])))
+        self.method(self.cts[CURRENT_TIME], gatt, 'StartNotify')    # zone or manual changes
+        self.cts_next = time.time() + 6 * 3600
+
+    def cts_zone(self, value):
+        """Local Time Information: time zone and DST offset, both in 15 minute units."""
+        if len(value) >= 2 and value[0] != 0x80 and value[1] != 0xff:
+            self.cts_offset = (struct.unpack('<b', value[:1])[0] + value[1]) * 900
+
+    def cts_value(self, value):
+        """Current Time: the iPhone's local time; to UTC with its zone, else with ours."""
+        if len(value) < 7:
+            return
+        y, mo, d, h, mi, sec = struct.unpack_from('<HBBBBB', value)
+        if y < 2020:
+            return
+        if self.cts_offset is not None:
+            epoch = calendar.timegm((y, mo, d, h, mi, sec, 0, 0, 0)) - self.cts_offset
+        else:
+            epoch = time.mktime((y, mo, d, h, mi, sec, 0, 0, -1))
+        drift = epoch - time.time()
+        if abs(drift) <= 2:
+            return
+        try:
+            time.clock_settime(time.CLOCK_REALTIME, epoch)
+            with open(RTC) as f:
+                rtc = int(f.read())
+            write_file(RTC_OFFSET, '%d\n' % (int(epoch) - rtc))
+            log('clock set from the iPhone (%+.0f s)' % drift)
+        except (OSError, ValueError) as e:
+            log('could not set the clock:', e)
+
     # --- state and control ------------------------------------------------------------------
     def save(self):
         notes = sorted(self.notes.values(), key=lambda n: -n['time'])[:KEEP]
@@ -333,10 +447,6 @@ class Ancs:
         # The same for the C UI: "connected 0|1", then one line per notification, fields
         # separated by 0x1f (uid, time, category, flags, app, title, message, positive,
         # negative), control characters in the text turned into spaces.
-        def clean(s):                                     # the C fonts are ASCII only
-            s = str(s).translate(ASCII_PUNCT)
-            s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
-            return ''.join(' ' if ord(ch) < 32 else ch for ch in s).strip()
         lines = ['connected %d' % bool(self.chars)]
         for n in notes:
             if 'title' not in n and 'message' not in n:
@@ -354,10 +464,14 @@ class Ancs:
             log('pairing mode for %d s' % PAIRING_SECONDS)
         elif len(words) == 2 and words[0] in ('positive', 'negative') and words[1].isdigit():
             self.action(int(words[1]), words[0] == 'positive')
+        elif len(words) == 2 and words[0] == 'media':
+            self.media_command(words[1])
 
     def tick(self):
         if not self.registered and time.time() >= self.next_check:
             self.check_adapter()
+        if self.cts and time.time() >= self.cts_next:
+            self.cts_read()
         if self.pairing_until and time.time() >= self.pairing_until:
             self.pairing_until = 0
             self.set_adapter('Pairable', ('b', False))
@@ -410,6 +524,26 @@ def parse_reply(buf):
         attrs[attr] = buf[off + 3:off + 3 + n].decode('utf-8', 'replace')
         off += 3 + n
     return (buf[0], key, attrs)
+
+
+def clean(s):
+    """Text for the C UI: its fonts are ASCII only, and every field is one line."""
+    s = str(s).translate(ASCII_PUNCT)
+    s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+    return ''.join(' ' if ord(ch) < 32 else ch for ch in s).strip()
+
+
+def find_service(objs, service, wanted):
+    """{characteristic uuid: path} of the first `service` that has all `wanted` ones."""
+    for svc, ifs in objs.items():
+        if ifs.get('org.bluez.GattService1', {}).get('UUID', ('', ''))[1] != service:
+            continue
+        chars = {i['org.bluez.GattCharacteristic1']['UUID'][1]: p
+                 for p, i in objs.items()
+                 if p.startswith(svc + '/') and 'org.bluez.GattCharacteristic1' in i}
+        if all(u in chars for u in wanted):
+            return chars
+    return None
 
 
 def write_file(path, text):
