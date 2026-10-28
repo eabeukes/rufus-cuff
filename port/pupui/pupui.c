@@ -2,11 +2,11 @@
  * pupui: "Pup Rescue HQ", a kids' launcher and games for the Rufus Cuff (Linux).
  *
  * Draws on /dev/fb0 (480x640 portrait XRGB, panel mounted sideways) as a 640x480
- * landscape canvas: canvas (x, y) -> framebuffer column 479 - y, row x, so the picture is
+ * landscape canvas: canvas (x, y) -> framebuffer column y, row 639 - x, so the picture is
  * upright with the watch's buttons on the right. Touch arrives already in canvas
  * coordinates (edt-ft5x06 with inverted-x + swapped-x-y in the DT).
  *
- * Buttons: second button (KEY_BACK) = home; hold it 3 s = reboot (back to Android).
+ * Buttons: upper button (KEY_BACK; worn buttons-right) = home; hold it 3 s = reboot (back to Android).
  *          power (KEY_POWER, short press) = screen off/on.
  *          hold both 3 s = grown-up mode (grownup.c), after a sum.
  * Games: Pup Pop (tap the pups), Badge Match (memory), Paint, Pup Parade.
@@ -193,9 +193,9 @@ static int in_home_button(int x, int y) { return (x - 42) * (x - 42) + (y - 42) 
 void present(void)
 {
 	for (int x = 0; x < W; x++) {
-		volatile uint32_t *row = fb + x * fb_sw;
+		volatile uint32_t *row = fb + (W - 1 - x) * fb_sw;
 		for (int y = 0; y < H; y++)
-			row[H - 1 - y] = cv[y][x];
+			row[y] = cv[y][x];
 	}
 }
 

@@ -103,7 +103,7 @@
 	 * (3 frames, reserved by LK as mblock-5-framebuffer). LK's OVL0 layers keep showing
 	 * LK's images whatever we write to them, so rdma-scanout below switches RDMA0 to
 	 * memory mode and points it at this buffer (third vram frame). The panel is natively portrait; the
-	 * watch is worn landscape with the buttons on the right, hence fbcon=rotate:3.
+	 * watch is worn landscape with the buttons on the right, hence fbcon=rotate:1.
 	 * simpledrm binds by compatible, so this does not need to live under /chosen.
 	 */
 	simplefb: framebuffer@7fd68000 {

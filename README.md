@@ -56,7 +56,7 @@ adb reboot recovery
 ```
 
 On the watch: a root shell on the USB serial port (`scripts/watch-shell.ps1`), SSH keys in
-`/root/.ssh/authorized_keys` (no password logins). Hold the second button for 3 s in the UI to go
+`/root/.ssh/authorized_keys` (no password logins). Hold the upper button (the lower one is power) for 3 s in the UI to go
 back to Android. Back up Linux with `adb pull /data/linux/rootfs.img` (it holds saved Wi-Fi
 passwords: keep it private); delete `/data/linux/rootfs.map` (from Android) to stop booting into
 it. Without an installed rootfs, Linux runs from its initramfs and returns to Android after 120 s.
@@ -65,7 +65,7 @@ it. Without an installed rootfs, Linux runs from its initramfs and returns to An
 keyboard, forget), a terminal, battery/system status and brightness, Desktop (Sxmo on sway),
 back to kid mode, reboot to Android. The screen turning off always returns to kid mode.
 `wifi-add "SSID" "password"` in a shell does the same as the Wi-Fi screen. In the desktop (Sxmo),
-the second button opens the menu and touch selects; power (or idle) ends it and returns to the
+the upper button opens the menu and touch selects; power (or idle) ends it and returns to the
 pups. Sxmo's own Wi-Fi and modem menus do nothing here (no NetworkManager, no modem driver): use
 grown-up mode for Wi-Fi.
 

@@ -366,3 +366,24 @@ Each of these cost a debugging round:
   manual modem start. No change: no AT answer, NMI at +33 s, DVFSRC level never moved (no SPM
   firmware to act on requests). Not pursued further (loading the SPM firmware was only worth it
   if this helped).
+
+## 2026-10-28 (evening): picture turned 180°
+
+- The owner, holding the watch as worn (buttons on the right): the picture is upside down and
+  taps miss. Taps recorded on `/dev/input/event3` came in at (27,60) and (615,437), the canvas's
+  top-left and bottom-right corners, so the touch mapping in the DT was right all along and only
+  the drawing was 180° off.
+- Turned: pupui now maps canvas (x, y) to framebuffer row 639-x, column y; `fbcon=rotate:1`;
+  sway `transform 270`; `scripts/fb2png.py` rotates the other way. The DT touch properties are
+  unchanged.
+- Buttons, as worn: the upper one is `KEY_BACK` (pupui home, Sxmo menu), the lower one power.
+  Earlier notes say "second button" for `KEY_BACK`.
+- Desktop "touch does nothing": touches reach the kernel and sway has the device enabled
+  (calibration identity, output 640x480 logical). Sxmo's bare desktop only takes edge swipes;
+  taps act in menus and apps. Sxmo locks after 2 min idle, which `rufus-desktop` treats as
+  screen-off and ends the session.
+- Correction: taps in Sxmo's menu landed in the wrong place. wlroots rotates touch by the
+  output transform when the device is mapped to the output (Sxmo maps it), on top of the DT's
+  own turn to landscape. Fixed in `rufus.conf` with `calibration_matrix 0 1 0 -1 0 1` (libinput
+  hands sway panel-native coordinates); confirmed accurate by the owner. Menus: `BEMENU_OPTS`
+  in the device profile, 48 px rows with a 22 pt font (Sxmo's 20 px rows were too small to hit).
