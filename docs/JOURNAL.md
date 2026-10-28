@@ -387,3 +387,25 @@ Each of these cost a debugging round:
   own turn to landscape. Fixed in `rufus.conf` with `calibration_matrix 0 1 0 -1 0 1` (libinput
   hands sway panel-native coordinates); confirmed accurate by the owner. Menus: `BEMENU_OPTS`
   in the device profile, 48 px rows with a 22 pt font (Sxmo's 20 px rows were too small to hit).
+
+## 2026-10-28 (evening): the modem stays up and answers AT
+
+- The vendor driver offers `CCB_SHARE_MEMORY` (15) and `DHL_RAW_SHARE_MEMORY` (16) as MUST for
+  `MD_GENERATION` 6293, which MT6739 is (`eccci/mt6739/ccci_config.h`); AGM's driver offered
+  neither. Offered alone, the MD now asserts 3 s after HS1, before HS2:
+  `ASSERT_FAIL` (0x50) in `mcu/common/service/hif/cccisrv/ccci_shm_bm/src/ccci_shm_bm.c` line
+  734. It validates the CCB control area, which stock's `ccci_mdinit` fills before the handshake.
+- Read back from stock with its modem up (Android in `boot` for one boot, `/dev/mem` at
+  0x8c018000, dumps in `logs/`, not published): 40 records of 32 bytes, one per buffer and
+  direction of the vendor's 20 `ccb_configs`: 0xddbbccaa, four ring indices, page size, buffer
+  size, end guard. The end guard is 0x1100ffee for DHL (stock's `emdlogger` reads those) and
+  0xeeff0011 for MD monitor and META (nothing reads them). Stock's runtime data matches ours:
+  control 0x40018000+0x1000, data 0x4e000000+0x17c000 (the vendor's buffer total; AGM sent
+  2 MiB), DHL raw 0x4e200000+0xa00000.
+- The driver now writes that table (all records 0xeeff0011, no log consumer on Linux) when it
+  clears shared memory, and offers both features. Result: HS2 at 6.4 s, **no exception** (still
+  `ready` well past the old +33 s), and `/dev/wwan0at0` answers: `AT` OK with `+EIND: 64` and
+  `+EIND: 128`, `+CFUN: 0`, `+CPIN?` "SIM busy" (no SIM fitted), `+CSQ: 99,99`, `+COPS: 0`.
+- So the NMI at +33 s was the modem's watchdog catching a task stuck on the missing CCB setup.
+  The SPM firmware (the other candidate) was not needed. `RELOAD_MD_TYPE` only changes the
+  AP-side load type in the vendor driver (`fsm/ccci_fsm_ioctl.c`), so it was not ported.

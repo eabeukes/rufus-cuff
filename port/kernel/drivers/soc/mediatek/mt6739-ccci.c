@@ -143,7 +143,9 @@ enum {
 #define SMEM_CCISM_EXP		0xd8400
 #define SMEM_CCISM_EXP_SIZE	(121 * SZ_1K)
 #define SMEM_SIB		SZ_1M
-#define CCB_DATA_SIZE		SZ_2M
+#define CCB_DATA_SIZE		SZ_2M	/* DHL raw starts here */
+/* The vendor's MT6739 ccb_configs (DHL, MD monitor, META buffers), each user 4 KiB aligned. */
+#define CCB_USED_SIZE		0x17c000
 #define CCMNI_MTU		(3584 - 16)
 
 #define RING_HEADER		0xee0000ee
@@ -370,7 +372,9 @@ static const u8 ap_feature_mask[MD_FEATURE_COUNT] = {
 	[F_CLIB_TIME] = FEATURE_MUST,
 	[F_C2K] = FEATURE_MUST,
 	[F_MD_IMAGE_START] = FEATURE_OPTIONAL,
-	/* CCB and DHL raw need the CCB control setup that ccci_mdinit does; not offered yet. */
+	/* The vendor driver offers both for MD_GENERATION 6293, which MT6739 is. */
+	[F_CCB_SHM] = FEATURE_MUST,
+	[F_DHL_RAW_SHM] = FEATURE_MUST,
 	[F_NETD_SHM] = FEATURE_MUST,
 	[F_USB_SHM] = FEATURE_MUST,
 	[F_EE_AFTER_EPOF] = FEATURE_MUST,
@@ -1434,7 +1438,7 @@ static int mt6739_ccci_runtime_data(struct mt6739_ccci *md, const u8 *md_feature
 				d[0] = mt6739_ccci_smem_md(md, SMEM_CCB_CTRL);
 				d[1] = SZ_4K;
 				d[2] = mt6739_ccci_ccb_md(md);
-				d[3] = CCB_DATA_SIZE;
+				d[3] = CCB_USED_SIZE;
 				len = sizeof(d);
 				break;
 			case F_DHL_RAW_SHM:
@@ -1693,9 +1697,42 @@ static int mt6739_ccci_pll_init(struct mt6739_ccci *md)
 	return 0;
 }
 
+/*
+ * CCB control table, which stock's ccci_mdinit writes before the handshake from the vendor's
+ * ccb_configs (DHL x18, MD monitor, META). Without it, the MD asserts in ccci_shm_bm.c once
+ * F_CCB_SHM is offered. One 32-byte record per buffer and direction (modem-to-AP first):
+ * start guard, four ring indices, page size, buffer size, end guard. Read back from stock:
+ * buffers with no AP consumer end in 0xeeff0011 (stock's emdlogger turns DHL's to 0x1100ffee).
+ */
+#define CCB_GUARD_START		0xddbbccaa
+#define CCB_GUARD_IDLE		0xeeff0011
+
+static const u32 ccb_ctrl_table[][2] = {	/* page size, buffer size */
+	{ 0x400, 0x8000 }, { 0x400, 0x8000 },		/* DHL control */
+	{ 0x5000, 0x1e000 }, { 0x80, 0x80 },		/* DHL exception */
+	{ 0x200, 0x9000 }, { 0x400, 0x8000 },		/* DHL PS */
+	{ 0x200, 0x8000 }, { 0x80, 0x80 },		/* DHL HW logger 1 */
+	{ 0x200, 0x8000 }, { 0x80, 0x80 },		/* DHL HW logger 2 */
+	{ 0x200, 0x20000 }, { 0x80, 0x80 },		/* DHL HW logger 3 */
+	[12 ... 33] = { 0x80, 0x80 },			/* DHL dummies x11 */
+	{ 0x80, 0x280 }, { 0x80, 0x80 },		/* DHL padding */
+	{ 0x200, 0x4000 }, { 0x400, 0x4000 },		/* MD monitor */
+	{ 0x10400, 0x82000 }, { 0x10400, 0x82000 },	/* META */
+};
+
 static void mt6739_ccci_clear_smem(struct mt6739_ccci *md)
 {
+	u32 *ctrl = md->smem + SMEM_CCB_CTRL;
+	int i;
+
+	BUILD_BUG_ON(ARRAY_SIZE(ccb_ctrl_table) != 40);
 	memset(md->smem, 0, md->smem_layout.ap_md1_size);
+	for (i = 0; i < ARRAY_SIZE(ccb_ctrl_table); i++, ctrl += 8) {
+		ctrl[0] = CCB_GUARD_START;
+		ctrl[5] = ccb_ctrl_table[i][0];
+		ctrl[6] = ccb_ctrl_table[i][1];
+		ctrl[7] = CCB_GUARD_IDLE;
+	}
 }
 
 /*

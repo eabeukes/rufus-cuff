@@ -66,12 +66,13 @@ keyboard, forget), a terminal, battery/system status and brightness, Desktop (Sx
 back to kid mode, reboot to Android. The screen turning off always returns to kid mode.
 `wifi-add "SSID" "password"` in a shell does the same as the Wi-Fi screen. In the desktop (Sxmo),
 the upper button opens the menu and touch selects; power (or idle) ends it and returns to the
-pups. Sxmo's own Wi-Fi and modem menus do nothing here (no NetworkManager, no modem driver): use
+pups. Sxmo's own Wi-Fi and modem menus do nothing here (no NetworkManager or ModemManager): use
 grown-up mode for Wi-Fi.
 
 In a shell: `vibrate 500` (motor), `aplay file.wav` / `arecord` (speaker, mic),
 `/sys/bus/iio/devices/*/in_accel_*_raw` (accelerometer), `hciconfig hci0 up` (Bluetooth: the
-controller starts, scanning does not find devices yet).
+controller starts, scanning does not find devices yet). The modem's AT port is `/dev/wwan0at0`
+(it starts with the radio off, `+CFUN: 0`; calls, SMS and data need a SIM and are not done yet).
 
 **Your own pictures** (personal use; they stay on the watch, never in this repo): put
 `pup0`..`pup5` (png/jpg), optionally `home` (background) and `names.txt` in a folder, then
