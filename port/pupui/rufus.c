@@ -1120,6 +1120,22 @@ void rufus_draw(long t)
 	draw_banner(t);
 }
 
+static void bench_draw(void) { rufus_draw(now_ms()); }
+
+void rufus_bench(void)
+{
+	static const struct { const char *name; enum view v; } vs[] = {
+		{ "face", FACE }, { "notifications", NOTES }, { "quick settings", QUICK },
+		{ "apps", APPS }, { "timer", TIMER }, { "calculator", CALC }, { "2048", GAME },
+	};
+	notes_load();
+	for (size_t i = 0; i < sizeof(vs) / sizeof(vs[0]); i++) {
+		go(vs[i].v);
+		printf("%-14s %7.2f ms\n", vs[i].name, bench_ms(bench_draw, 20));
+	}
+	go(FACE);
+}
+
 /* Redraw often while something moves (timer, stopwatch, pairing countdown). */
 int rufus_animating(void)
 {

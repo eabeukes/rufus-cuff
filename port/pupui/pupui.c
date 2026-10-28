@@ -842,11 +842,37 @@ static void handle_touch(int ev, int x, int y, long t)
 
 int saved_bl;
 
-int main(void)
+/* Average milliseconds per call of fn over n calls. */
+double bench_ms(void (*fn)(void), int n)
+{
+	struct timespec a, b;
+	clock_gettime(CLOCK_MONOTONIC, &a);
+	for (int i = 0; i < n; i++)
+		fn();
+	clock_gettime(CLOCK_MONOTONIC, &b);
+	return ((b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6) / n;
+}
+
+static void bench_clear(void) { fill_rect(0, 0, W, H, 0xff000000); }
+
+/* pupui --bench: drawing costs on this hardware (run with the UI service stopped). */
+static void bench(void)
+{
+	printf("present        %7.2f ms\n", bench_ms(present, 20));
+	printf("clear canvas   %7.2f ms\n", bench_ms(bench_clear, 20));
+	printf("kids home      %7.2f ms\n", bench_ms(draw_home, 20));
+	rufus_bench();
+}
+
+int main(int argc, char **argv)
 {
 	srand((unsigned)time(NULL) ^ (unsigned)getpid());
 	if (fb_open())
 		return 1;
+	if (argc > 1 && !strcmp(argv[1], "--bench")) {
+		bench();
+		return 0;
+	}
 	input_open();
 	theme_load();
 	paint_clear();
@@ -868,6 +894,15 @@ int main(void)
 				(scene == RUFUS && rufus_animating());
 		int timeout = !screen_on ? 1000 : animating ? 33 : 500;
 		int n = in_n;
+
+		/*
+		 * A redraw held back by the 30 ms frame gap must not wait for the next event:
+		 * otherwise the last touch of a swipe could show up to 500 ms late.
+		 */
+		if (screen_on && dirty) {
+			long gap = 30 - (t - last_frame);
+			timeout = gap < 0 ? 0 : gap < timeout ? (int)gap : timeout;
+		}
 
 		/* The grown-up terminal's output wakes us too (slot after the input devices). */
 		if (scene == ADULT && adult_fd() >= 0) {

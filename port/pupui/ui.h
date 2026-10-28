@@ -49,6 +49,8 @@ void rufus_back(void);
 int rufus_tick(long t, int kids);	/* RUFUS_REDRAW | RUFUS_WAKE | RUFUS_SHOW */
 void rufus_alarm_input(void);	/* a button or touch in Kids mode: stop a ringing alarm */
 int rufus_animating(void);
+void rufus_bench(void);		/* pupui --bench: time each view's drawing */
+double bench_ms(void (*fn)(void), int n);
 
 /* grownup.c: Settings (Wi-Fi, terminal, status, desktop), and the sum gate out of Kids mode. */
 enum { SETTINGS_MENU, SETTINGS_TERMINAL, SETTINGS_DESKTOP };

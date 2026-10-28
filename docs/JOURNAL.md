@@ -505,3 +505,11 @@ Each of these cost a debugging round:
   injected taps and swipes; the alarm with the screen off, and the owner felt it buzz.
 - The face's clock redrew every 60 s of monotonic time, so it could show the old minute for up
   to a minute; it now follows the wall-clock minute.
+- Speed, measured before changing anything (`pupui --bench`, 20 runs each, on the watch):
+  present (canvas to the rotated framebuffer) 1.6 ms, clear 0.3 ms, RufusOS screens 1.2-2.9 ms,
+  Kids home 6.2 ms: about 5 ms a frame, so drawing was not what felt slow. Latency test
+  (inject a swipe face -> apps, poll the framebuffer until it changes; `/proc/uptime`, 10 ms
+  resolution): 6 of 8 swipes 20 ms, 2 of 8 520 ms. The main loop held a redraw back for the
+  30 ms frame gap and then waited in poll() for the next event, up to 500 ms when nothing
+  animates; the finger-up that ends a swipe often came inside the gap. With the poll timeout cut
+  to the rest of the gap when a redraw is pending: 16 of 16 swipes in 10-20 ms.
