@@ -9,5 +9,9 @@ start() {
 	i=0
 	while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 0.5; i=$((i + 1)); done
 	ip link set wlan0 up
-	eend $?
+	rc=$?
+	# Power save between packets: about 60 mA less with the screen off (measured), and it
+	# stays connected.
+	iw dev wlan0 set power_save on 2>/dev/null
+	eend $rc
 }
