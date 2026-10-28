@@ -89,7 +89,7 @@ in_root "for s in devfs dmesg procfs sysfs udev udev-trigger udev-settle; do rc-
 	rc-update add udev-postmount default
 	for s in bootmisc hostname localmount syslog rufus-clock; do rc-update add \$s boot; done
 	for s in killprocs savecache mount-ro; do rc-update add \$s shutdown; done
-	for s in rufus-wifi wpa_supplicant rufus-dhcp chronyd dropbear rufus-ui rufus-battery rufus-failsafe seatd rufus-audio rufus-modem bluetooth; do rc-update add \$s default; done
+	for s in rufus-wifi wpa_supplicant rufus-dhcp chronyd dropbear rufus-ui rufus-battery rufus-failsafe seatd rufus-audio rufus-modem bluetooth rufus-ancs; do rc-update add \$s default; done
 	passwd -l root >/dev/null
 	# The grown-up desktop's user (rufus-desktop); no password logins.
 	adduser -D -s /bin/sh rufus && passwd -l rufus >/dev/null

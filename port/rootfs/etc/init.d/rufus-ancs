@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# iPhone notifications over Bluetooth LE (ANCS), restarted if it exits.
+description="iPhone notifications"
+supervisor=supervise-daemon
+command=/usr/local/bin/rufus-ancs
+output_log=/var/log/rufus-ancs.log
+error_log=/var/log/rufus-ancs.log
+respawn_delay=5
+
+depend() {
+	need bluetooth
+}

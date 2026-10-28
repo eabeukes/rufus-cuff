@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""iPhone notifications on the watch: an ANCS client (Apple Notification Center Service).
+
+- Advertises over LE, soliciting ANCS, so a bonded iPhone reconnects by itself.
+- Pairing agent (DisplayYesNo): accepts a pairing only in pairing mode ("pair" on CTL, two
+  minutes), and puts the passkey in PASSKEY for the UI to show while the owner confirms the
+  same code on the phone.
+- Once the iPhone's ANCS service is resolved, subscribes to Notification Source and Data
+  Source and asks for each notification's attributes (and each app's display name) on the
+  Control Point, one request at a time.
+- Keeps the current notifications in STATE (JSON) and STATE_TXT (for the C UI), rewritten on
+  every change, and buzzes for new ones.
+- Commands on CTL (a FIFO, one per line): "pair", "positive UID", "negative UID".
+
+Talks to bluetoothd over the system D-Bus with jeepney (pure Python, in the rootfs). The
+main loop handles bluetoothd's calls to us (advertisement, agent), signals and replies.
+"""
+import errno
+import itertools
+import json
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+import unicodedata
+
+from jeepney import (DBusAddress, HeaderFields, MatchRule, MessageType, message_bus,
+                     new_error, new_method_call, new_method_return)
+from jeepney.io.blocking import open_dbus_connection
+from jeepney.low_level import MessageFlag
+
+ANCS = '7905f431-b5ce-4e99-a40f-4b1e122d00d0'
+NOTIFICATION_SOURCE = '9fbf120d-6301-42d9-8c58-25e699a21dbd'
+CONTROL_POINT = '69d1d8f3-45e1-49a8-9821-9bbdfdaad9d9'
+DATA_SOURCE = '22eac6e9-24d6-4bb5-be44-b36ace7c7bfb'
+
+RUN = '/run/rufus'
+STATE = RUN + '/notifications.json'
+STATE_TXT = RUN + '/notifications.txt'
+ASCII_PUNCT = str.maketrans({'\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+                             '\u2013': '-', '\u2014': '-', '\u2026': '...', '\u00a0': ' ',
+                             '\u2022': '*'})
+PASSKEY = RUN + '/bt-passkey'
+DND = RUN + '/dnd'                                        # Do Not Disturb (set by the UI)
+CTL = RUN + '/ancs.ctl'
+ADAPTER = '/org/bluez/hci0'
+ADV_PATH = '/rufus/ancs/advertisement'
+AGENT_PATH = '/rufus/ancs/agent'
+NAME = 'Rufus Cuff'
+PAIRING_SECONDS = 120
+KEEP = 50
+
+CATEGORIES = ['other', 'incoming-call', 'missed-call', 'voicemail', 'social', 'schedule',
+              'email', 'news', 'health', 'business', 'location', 'entertainment']
+F_SILENT, F_PRE_EXISTING, F_POSITIVE, F_NEGATIVE = 1, 4, 8, 16
+# Notification attributes: app identifier, title, message (max 255), date, action labels.
+N_ATTRS = [(0, None, 'app'), (1, 255, 'title'), (3, 255, 'message'), (5, None, 'date'),
+           (6, None, 'positive'), (7, None, 'negative')]
+N_NAMES = {a: n for a, _, n in N_ATTRS}
+
+
+def log(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+def bluez(path, iface):
+    return DBusAddress(path, bus_name='org.bluez', interface=iface)
+
+
+class Ancs:
+    def __init__(self):
+        self.conn = open_dbus_connection(bus='SYSTEM')
+        self.serial = itertools.count(1000)
+        self.pending = {}            # serial -> callback(reply message)
+        self.chars = None            # {uuid: path} of the connected iPhone's ANCS
+        self.notes = {}              # uid -> notification dict
+        self.apps = {}               # app identifier -> display name
+        self.requests = []           # Control Point commands waiting their turn
+        self.busy = False            # a Data Source reply is outstanding
+        self.data = b''
+        self.pairing_until = 0
+        self.registered = False      # agent and advertisement are with bluetoothd
+        self.adv_ok = False          # our advertisement is registered
+        self.next_check = 0
+
+    # --- D-Bus plumbing -------------------------------------------------------------------
+    def call(self, msg, cb=None, err=None):
+        s = next(self.serial)
+        self.pending[s] = (cb, err)
+        self.conn.send(msg, serial=s)
+
+    def method(self, path, iface, member, sig=None, body=(), cb=None, err=None):
+        self.call(new_method_call(bluez(path, iface), member, sig, body), cb, err)
+
+    def reply(self, msg, sig=None, body=()):
+        # Release and Cancel come flagged no-reply; the bus policy rejects a reply to them.
+        if not msg.header.flags & MessageFlag.no_reply_expected:
+            self.conn.send(new_method_return(msg, sig, body), serial=next(self.serial))
+
+    def reject(self, msg):
+        self.conn.send(new_error(msg, 'org.bluez.Error.Rejected'), serial=next(self.serial))
+
+    def dispatch(self, msg):
+        h = msg.header
+        if h.message_type in (MessageType.method_return, MessageType.error):
+            cb, err = self.pending.pop(h.fields.get(HeaderFields.reply_serial), (None, None))
+            if h.message_type == MessageType.error:
+                log('D-Bus error:', h.fields.get(HeaderFields.error_name), msg.body)
+                if err:
+                    err(msg)
+            elif cb:
+                cb(msg)
+        elif h.message_type == MessageType.method_call:
+            self.handle_call(msg)
+        elif h.message_type == MessageType.signal:
+            self.handle_signal(msg)
+
+    # --- setup ----------------------------------------------------------------------------
+    def start(self):
+        owner = MatchRule(type='signal', interface='org.freedesktop.DBus',
+                          member='NameOwnerChanged')
+        owner.add_arg_condition(0, 'org.bluez')
+        for rule in (
+                MatchRule(type='signal', interface='org.freedesktop.DBus.Properties',
+                          member='PropertiesChanged', path_namespace=ADAPTER),
+                MatchRule(type='signal', interface='org.freedesktop.DBus.ObjectManager',
+                          member='InterfacesAdded'),
+                owner):
+            self.call(message_bus.AddMatch(rule))
+
+    def check_adapter(self):
+        """Register once bluetoothd has the adapter (tick() retries every few seconds)."""
+        self.next_check = time.time() + 3
+        self.method('/', 'org.freedesktop.DBus.ObjectManager', 'GetManagedObjects',
+                    cb=lambda m: 'org.bluez.Adapter1' in m.body[0].get(ADAPTER, {})
+                    and not self.registered and self.register())
+
+    def register(self):
+        """Agent, advertisement and ANCS lookup: again whenever bluetoothd (re)starts."""
+        self.registered = True
+        self.method('/org/bluez', 'org.bluez.AgentManager1', 'RegisterAgent', 'os',
+                    (AGENT_PATH, 'DisplayYesNo'),
+                    lambda m: self.method('/org/bluez', 'org.bluez.AgentManager1',
+                                          'RequestDefaultAgent', 'o', (AGENT_PATH,)))
+        self.set_adapter('Pairable', ('b', False))
+        self.advertise()
+        self.look_for_ancs()
+
+    def advertise(self):
+        """bluetoothd keeps the advertisement and resumes it after each disconnection. This
+        controller refuses a new one while the iPhone is connected: then try again once it
+        has gone."""
+        self.adv_ok = True
+        self.method(ADAPTER, 'org.bluez.LEAdvertisingManager1', 'RegisterAdvertisement',
+                    'oa{sv}', (ADV_PATH, {}), lambda m: log('advertising'),
+                    lambda m: setattr(self, 'adv_ok', False))
+
+    def set_adapter(self, prop, value):
+        self.method(ADAPTER, 'org.freedesktop.DBus.Properties', 'Set', 'ssv',
+                    ('org.bluez.Adapter1', prop, value))
+
+    def look_for_ancs(self):
+        self.method('/', 'org.freedesktop.DBus.ObjectManager', 'GetManagedObjects',
+                    cb=lambda m: self.found_objects(m.body[0]))
+
+    def found_objects(self, objs):
+        if self.chars:
+            return
+        for svc, ifs in objs.items():
+            if ifs.get('org.bluez.GattService1', {}).get('UUID', ('', ''))[1] != ANCS:
+                continue
+            chars = {i['org.bluez.GattCharacteristic1']['UUID'][1]: p
+                     for p, i in objs.items()
+                     if p.startswith(svc + '/') and 'org.bluez.GattCharacteristic1' in i}
+            if all(u in chars for u in (NOTIFICATION_SOURCE, CONTROL_POINT, DATA_SOURCE)):
+                self.subscribe(chars)
+                return
+
+    def subscribe(self, chars):
+        self.chars = chars
+        self.notes.clear()
+        self.requests.clear()
+        self.busy, self.data = False, b''
+        self.save()
+        for uuid in (DATA_SOURCE, NOTIFICATION_SOURCE):
+            self.method(chars[uuid], 'org.bluez.GattCharacteristic1', 'StartNotify')
+        log('ANCS subscribed')
+
+    # --- bluetoothd calling us --------------------------------------------------------------
+    def handle_call(self, msg):
+        path = msg.header.fields.get(HeaderFields.path)
+        member = msg.header.fields.get(HeaderFields.member)
+        if path == ADV_PATH and member == 'GetAll':
+            self.reply(msg, 'a{sv}', ({
+                'Type': ('s', 'peripheral'),
+                'SolicitUUIDs': ('as', [ANCS]),
+                'LocalName': ('s', NAME),
+                'Discoverable': ('b', True),
+            },))
+        elif path == ADV_PATH and member == 'Release':
+            self.reply(msg)
+        elif path == AGENT_PATH and member in ('RequestConfirmation', 'RequestAuthorization',
+                                               'AuthorizeService'):
+            # New pairings (numeric comparison or Just Works) and service authorisation for
+            # untrusted devices only in pairing mode; bonded devices reconnect without asking.
+            if time.time() < self.pairing_until:
+                if member == 'RequestConfirmation':
+                    write_file(PASSKEY, '%06d\n' % msg.body[1])
+                log(member, 'accepted in pairing mode')
+                self.reply(msg)
+            else:
+                log(member, 'outside pairing mode: rejected')
+                self.reject(msg)
+        elif path == AGENT_PATH and member in ('Release', 'Cancel', 'DisplayPasskey',
+                                               'DisplayPinCode'):
+            self.reply(msg)
+        else:
+            self.reject(msg)
+
+    def handle_signal(self, msg):
+        member = msg.header.fields.get(HeaderFields.member)
+        path = msg.header.fields.get(HeaderFields.path)
+        if member == 'NameOwnerChanged':
+            self.chars = None
+            self.notes.clear()
+            self.save()
+            self.registered = False
+            if msg.body[2]:
+                log('bluetoothd (re)started')
+            return
+        if member == 'InterfacesAdded':
+            if not self.chars and 'org.bluez.GattCharacteristic1' in msg.body[1]:
+                self.look_for_ancs()
+            return
+        if member != 'PropertiesChanged':                 # e.g. the bus's NameAcquired
+            return
+        iface, changed, _ = msg.body
+        if iface == 'org.bluez.Device1':
+            if changed.get('ServicesResolved', ('b', False))[1] and not self.chars:
+                self.look_for_ancs()
+            if changed.get('Connected', ('b', True))[1] is False and self.chars \
+                    and self.chars[NOTIFICATION_SOURCE].startswith(path + '/'):
+                log('iPhone disconnected')
+                self.chars = None
+                self.notes.clear()
+                self.save()
+                if not self.adv_ok:
+                    self.advertise()
+        elif iface == 'org.bluez.GattCharacteristic1' and 'Value' in changed and self.chars:
+            value = bytes(changed['Value'][1])
+            if path == self.chars[NOTIFICATION_SOURCE]:
+                self.notification_event(value)
+            elif path == self.chars[DATA_SOURCE]:
+                self.data_source(value)
+
+    # --- ANCS -------------------------------------------------------------------------------
+    def notification_event(self, value):
+        if len(value) < 8:
+            return
+        event, flags, cat, _, uid = struct.unpack_from('<BBBBI', value)
+        if event == 2:                                   # removed
+            if self.notes.pop(uid, None):
+                self.save()
+            return
+        note = self.notes.setdefault(uid, {'uid': uid})
+        note.update(flags=flags, time=int(time.time()),
+                    category=CATEGORIES[cat] if cat < len(CATEGORIES) else 'other',
+                    buzz=event == 0 and not flags & (F_SILENT | F_PRE_EXISTING))
+        req = struct.pack('<BI', 0, uid)
+        for attr, maxlen, _ in N_ATTRS:
+            req += struct.pack('<B', attr) + (struct.pack('<H', maxlen) if maxlen else b'')
+        self.request(req)
+
+    def request(self, req):
+        self.requests.append(req)
+        self.next_request()
+
+    def next_request(self):
+        if self.busy or not self.requests or not self.chars:
+            return
+        req = self.requests.pop(0)
+        # Commands 0 and 1 answer on the Data Source; 2 (perform action) does not.
+        self.busy, self.data = req[0] in (0, 1), b''
+        self.method(self.chars[CONTROL_POINT], 'org.bluez.GattCharacteristic1', 'WriteValue',
+                    'aya{sv}', (req, {}), err=self.request_failed)
+        if not self.busy:
+            self.next_request()
+
+    def request_failed(self, msg):
+        """ANCS refused a command (an ATT error, e.g. the notification is gone): go on."""
+        self.busy, self.data = False, b''
+        self.next_request()
+
+    def data_source(self, value):
+        self.data += value
+        parsed = parse_reply(self.data)
+        if parsed is None:
+            return
+        self.busy, self.data = False, b''
+        kind, key, attrs = parsed
+        if kind == 0:
+            note = self.notes.get(key)
+            if note is not None:
+                for attr, text in attrs.items():
+                    note[N_NAMES.get(attr, str(attr))] = text
+                app = note.get('app', '')
+                if app and app not in self.apps:
+                    self.request(b'\x01' + app.encode() + b'\x00\x00')
+                note['app_name'] = self.apps.get(app, app)
+                if note.pop('buzz', False) and not os.path.exists(DND):
+                    subprocess.Popen(['/usr/local/bin/vibrate', '150'],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.save()
+        elif kind == 1:
+            self.apps[key] = attrs.get(0, key)
+            for note in self.notes.values():
+                if note.get('app') == key:
+                    note['app_name'] = self.apps[key]
+            self.save()
+        self.next_request()
+
+    def action(self, uid, positive):
+        if self.chars and uid in self.notes:
+            self.request(struct.pack('<BIB', 2, uid, 0 if positive else 1))
+
+    # --- state and control ------------------------------------------------------------------
+    def save(self):
+        notes = sorted(self.notes.values(), key=lambda n: -n['time'])[:KEEP]
+        write_file(STATE, json.dumps({'connected': bool(self.chars), 'notifications': [
+            {k: v for k, v in n.items() if k != 'buzz'} for n in notes]}))
+        # The same for the C UI: "connected 0|1", then one line per notification, fields
+        # separated by 0x1f (uid, time, category, flags, app, title, message, positive,
+        # negative), control characters in the text turned into spaces.
+        def clean(s):                                     # the C fonts are ASCII only
+            s = str(s).translate(ASCII_PUNCT)
+            s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+            return ''.join(' ' if ord(ch) < 32 else ch for ch in s).strip()
+        lines = ['connected %d' % bool(self.chars)]
+        for n in notes:
+            if 'title' not in n and 'message' not in n:
+                continue                                  # attributes not here yet
+            lines.append('\x1f'.join(clean(n.get(k, '')) for k in (
+                'uid', 'time', 'category', 'flags', 'app_name', 'title', 'message',
+                'positive', 'negative')))
+        write_file(STATE_TXT, '\n'.join(lines) + '\n')
+
+    def command(self, line):
+        words = line.split()
+        if words == ['pair']:
+            self.pairing_until = time.time() + PAIRING_SECONDS
+            self.set_adapter('Pairable', ('b', True))
+            log('pairing mode for %d s' % PAIRING_SECONDS)
+        elif len(words) == 2 and words[0] in ('positive', 'negative') and words[1].isdigit():
+            self.action(int(words[1]), words[0] == 'positive')
+
+    def tick(self):
+        if not self.registered and time.time() >= self.next_check:
+            self.check_adapter()
+        if self.pairing_until and time.time() >= self.pairing_until:
+            self.pairing_until = 0
+            self.set_adapter('Pairable', ('b', False))
+            try:
+                os.unlink(PASSKEY)
+            except FileNotFoundError:
+                pass
+
+    def run(self):
+        self.start()
+        ctl = open_fifo(CTL)
+        buf = b''
+        while True:
+            while True:                                   # everything already buffered
+                try:
+                    self.dispatch(self.conn.receive(timeout=0.001))
+                except TimeoutError:
+                    break
+            r, _, _ = select.select([self.conn.sock, ctl], [], [], 1)
+            if ctl in r:
+                buf += os.read(ctl, 512)
+                *lines, buf = buf.split(b'\n')
+                for line in lines:
+                    self.command(line.decode(errors='replace'))
+            self.tick()
+
+
+def parse_reply(buf):
+    """A whole Data Source reply as (command, uid or app id, {attr: text}), else None."""
+    if not buf:
+        return None
+    if buf[0] == 0:
+        if len(buf) < 5:
+            return None
+        key, off, wanted = struct.unpack_from('<I', buf, 1)[0], 5, len(N_ATTRS)
+    elif buf[0] == 1:
+        end = buf.find(b'\x00', 1)
+        if end < 0:
+            return None
+        key, off, wanted = buf[1:end].decode(errors='replace'), end + 1, 1
+    else:
+        return (buf[0], None, {})
+    attrs = {}
+    for _ in range(wanted):
+        if off + 3 > len(buf):
+            return None
+        attr, n = struct.unpack_from('<BH', buf, off)
+        if off + 3 + n > len(buf):
+            return None
+        attrs[attr] = buf[off + 3:off + 3 + n].decode('utf-8', 'replace')
+        off += 3 + n
+    return (buf[0], key, attrs)
+
+
+def write_file(path, text):
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def open_fifo(path):
+    try:
+        os.mkfifo(path, 0o600)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    # O_RDWR keeps the FIFO open with no writer, so select() never spins on EOF.
+    return os.open(path, os.O_RDWR | os.O_NONBLOCK)
+
+
+def main():
+    os.umask(0o077)                                       # message text inside
+    os.makedirs(RUN, exist_ok=True)
+    Ancs().run()
+
+
+if __name__ == '__main__':
+    main()
