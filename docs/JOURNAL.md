@@ -490,3 +490,10 @@ Each of these cost a debugging round:
   failure no longer counts as "bluetoothd gone" (it re-registered every 3 s). bluetoothd keeps a
   registered advertisement and resumes it after a disconnection.
 - The owner tested RufusOS on the watch: works, "bit slow ... much faster than Android".
+- Recovery screen: `rufus-ui-run` (the rufus-ui service's command now) restarts pupui, and after
+  three crashes each within a minute of starting runs `rufus-recovery`, which puts tty0 back in
+  text mode and prints on the kernel console (no UI code involved): lower button restarts the
+  UI, upper held 3 s goes to Android. Tested by sending pupui SIGABRT three times.
+- Correction: that test showed the console upside down against pupui. Only pupui's drawing had
+  been 180° off; `fbcon=rotate:3` was right and is back (the owner had said the boot text was
+  correct).

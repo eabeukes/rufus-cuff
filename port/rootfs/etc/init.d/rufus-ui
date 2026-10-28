@@ -1,6 +1,9 @@
 #!/sbin/openrc-run
-# Pup Rescue HQ on the framebuffer, restarted if it exits.
-description="Kid UI"
+# RufusOS (and Kids mode) on the framebuffer. rufus-ui-run restarts it, and shows a
+# recovery screen if it keeps crashing.
+description="Watch UI"
 supervisor=supervise-daemon
-command=/usr/local/bin/pupui
+command=/usr/local/bin/rufus-ui-run
+output_log=/var/log/rufus-ui.log
+error_log=/var/log/rufus-ui.log
 respawn_delay=1

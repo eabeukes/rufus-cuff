@@ -71,14 +71,14 @@ sudo chmod 755 "$ROOT"/etc/init.d/rufus-* "$ROOT"/usr/local/bin/*
 sudo install -m 755 "$HOME/port/initramfs/bin/pupui" "$HOME/port/initramfs/bin/evtest" \
 	"$HOME/port/initramfs/bin/tap" "$HOME/port/initramfs/bin/disptool" \
 	"$HOME/port/initramfs/bin/vibrate" "$HOME/port/initramfs/bin/rufus-reboot" \
-	"$HOME/port/initramfs/bin/battery" "$ROOT/usr/local/bin/"
+	"$HOME/port/initramfs/bin/rufus-recovery" "$HOME/port/initramfs/bin/battery" "$ROOT/usr/local/bin/"
 # Wi-Fi firmware, Wi-Fi and BT NVRAM from this watch (port/firmware/README.txt; never published).
 sudo mkdir -p "$ROOT/lib/firmware"
 sudo cp "$REPO"/port/firmware/ROMv2_lm_patch_1_*_hdr.bin "$REPO/port/firmware/WIFI_RAM_CODE_6755" \
 	"$REPO/port/firmware/mt6739-wlan-nvram.bin" "$REPO/port/firmware/mt6739-bt-nvram.bin" \
 	"$ROOT/lib/firmware/"
 # Built binaries must arrive unmodified.
-for b in pupui evtest tap disptool vibrate rufus-reboot; do
+for b in pupui evtest tap disptool vibrate rufus-reboot rufus-recovery; do
 	cmp -s "$HOME/port/initramfs/bin/$b" "$ROOT/usr/local/bin/$b" || { echo "$b differs"; exit 1; }
 done
 

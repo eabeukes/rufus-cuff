@@ -126,7 +126,7 @@ What it took (each one cost a debugging round):
 
 | Part | State | How |
 |---|---|---|
-| Display | working from early boot | `port/kernel/drivers/soc/mediatek/mt6739-rdma-scanout.c` points RDMA0 at the simple-framebuffer (table below); fbcon `rotate:1`, `TER16x32` |
+| Display | working from early boot | `port/kernel/drivers/soc/mediatek/mt6739-rdma-scanout.c` points RDMA0 at the simple-framebuffer (table below); fbcon `rotate:3`, `TER16x32` |
 | Backlight | working, 16 steps | AW9364 on GPIO 85, `port/kernel/drivers/video/backlight/aw9364-backlight.c`, `/sys/class/backlight/backlight` |
 | Touch | working | `edt-ft5x06` at I2C0 `0x38`, swapped + inverted-x -> wearer's 640x480 |
 | Keys | working | upper button `KEY_BACK` (keypad), lower button power `KEY_POWER` (`mtk-pmic-keys`, stock long-press reset kept) |
@@ -156,8 +156,8 @@ RDMA0 in memory mode scans the simpledrm buffer directly, bypassing LK's OVL0:
 | RDMA0 `GLOBAL_CON` `0x1400b010` | `0x103` | was 0x101 (direct link); bit 1 = memory mode |
 
 Orientation: the panel is portrait 480x640, worn landscape with the buttons on the right, so
-canvas (x, y) is framebuffer row 639-x, column y (`fbcon=rotate:1`; until 2026-10-28 this was
-turned 180°, see `docs/JOURNAL.md`).
+canvas (x, y) is framebuffer row 639-x, column y (until 2026-10-28 pupui drew it turned 180°,
+see `docs/JOURNAL.md`). The console stays `fbcon=rotate:3`.
 
 Still unexplained (no longer blocking): OVL0 layers keep fetching LK's original images even when
 the CPU-visible DRAM at the layer address is rewritten (verified uncached). RDMA reading the same

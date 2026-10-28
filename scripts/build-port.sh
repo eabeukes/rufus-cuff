@@ -52,6 +52,7 @@ aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/evtest" "$REPO/port/tools/
 aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/tap" "$REPO/port/tools/tap.c"
 aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/vibrate" "$REPO/port/tools/vibrate.c"
 aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/rufus-reboot" "$REPO/port/tools/rufus-reboot.c"
+aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/rufus-recovery" "$REPO/port/tools/rufus-recovery.c"
 aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/mapfile" "$REPO/port/tools/mapfile.c"
 # The same tool for Android (32-bit userspace), used by install-rootfs.sh.
 mkdir -p "$OUT"

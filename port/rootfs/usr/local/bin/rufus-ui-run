@@ -1,0 +1,26 @@
+#!/bin/sh
+# Runs the UI (pupui) and starts it again when it exits. After 3 crashes, each within a
+# minute of starting, it shows rufus-recovery instead of a frozen last frame; a button
+# there starts the UI again. (The desktop replaces pupui and ends with status 0.)
+crashes=0
+while :; do
+	start=$(date +%s)
+	/usr/local/bin/pupui
+	rc=$?
+	if [ $rc -ne 0 ] && [ $(($(date +%s) - start)) -lt 60 ]; then
+		crashes=$((crashes + 1))
+	else
+		crashes=0
+	fi
+	echo "$(date '+%F %T') pupui exited with status $rc (quick crashes: $crashes)" >&2
+	if [ $crashes -ge 3 ]; then
+		if [ $rc -gt 128 ]; then
+			why="It crashed 3 times (signal $((rc - 128)))."
+		else
+			why="It failed 3 times (status $rc)."
+		fi
+		/usr/local/bin/rufus-recovery "$why"
+		crashes=0
+	fi
+	sleep 1
+done
