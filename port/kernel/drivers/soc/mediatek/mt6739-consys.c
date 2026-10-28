@@ -642,6 +642,13 @@ static int mt6739_consys_wmt_init(struct mt6739_consys *cs)
 	return ret;
 }
 
+/* For client drivers' probe: 0 once CONSYS has probed, else -EPROBE_DEFER. */
+int mt6739_consys_probed(void)
+{
+	return READ_ONCE(mt6739_consys) ? 0 : -EPROBE_DEFER;
+}
+EXPORT_SYMBOL_GPL(mt6739_consys_probed);
+
 int mt6739_consys_get(void)
 {
 	struct mt6739_consys *cs = READ_ONCE(mt6739_consys);

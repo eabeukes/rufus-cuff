@@ -409,3 +409,25 @@ Each of these cost a debugging round:
 - So the NMI at +33 s was the modem's watchdog catching a task stuck on the missing CCB setup.
   The SPM firmware (the other candidate) was not needed. `RELOAD_MD_TYPE` only changes the
   AP-side load type in the vendor driver (`fsm/ccci_fsm_ioctl.c`), so it was not ported.
+
+## 2026-10-28 (evening): Bluetooth scans
+
+- Stock's init for CONSYS chips is in `/vendor/lib/libbluetooth_mtk_pure.so` (read from the
+  system backup): `bt_init_script_consys` points at five steps whose opcodes decode from their
+  Thumb `movw`s: `0xfc1a` address, `0xfc79` radio (NVRAM Radio[6] + 2 bytes), `0xfc93` TX power
+  offset (TxPWOffset[3] + 3), `0xfc7a` sleep (Sleep[7]), then HCI Reset. The library's NVRAM
+  pointer sits 4 bytes before the record (offset 0x1f = TxPWOffset at 27).
+- Sent by hand they made scanning work, but only because the reset came after the kernel's
+  init. Bisected: the kernel's `LE Set Event Mask` was 0x10 (no advertising reports). The
+  firmware (MT0699, LMP 4.2, subversion 0x326) reports octets 25-28 of Read Local Supported
+  Commands as zero, all the 4.0 LE commands, which it does run; the core enables report events
+  only for advertised commands.
+- `btmt6739.c`: `setup()` replays stock's script from `mt6739-bt-nvram.bin` (now in the
+  initramfs and rootfs firmware) at every power-on (`HCI_QUIRK_NON_PERSISTENT_SETUP`; closing
+  switches BT off in WMT), and the Read Local Supported Commands reply gets octets 25-28 filled
+  in. The watch now uses its own address.
+- bluetoothd saw no controller: the BT driver probed before CONSYS, so the core's one power-on
+  at registration failed (`-EPROBE_DEFER` from the open) and the adapter stayed in setup, which
+  mgmt treats as an invalid index. The probe now defers until CONSYS is there.
+- Result: `hcitool lescan` ~300 reports from 14-16 devices in 8 s, every power-on;
+  `bluetoothctl scan on` finds 10 devices in 12 s through bluetoothd. Pairing not tried yet.

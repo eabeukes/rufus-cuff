@@ -70,8 +70,9 @@ pups. Sxmo's own Wi-Fi and modem menus do nothing here (no NetworkManager or Mod
 grown-up mode for Wi-Fi.
 
 In a shell: `vibrate 500` (motor), `aplay file.wav` / `arecord` (speaker, mic),
-`/sys/bus/iio/devices/*/in_accel_*_raw` (accelerometer), `hciconfig hci0 up` (Bluetooth: the
-controller starts, scanning does not find devices yet). The modem's AT port is `/dev/wwan0at0`
+`/sys/bus/iio/devices/*/in_accel_*_raw` (accelerometer), `rc-service bluetooth start` then
+`bluetoothctl` (Bluetooth: scanning works, pairing not tried yet; it needs this watch's BT NVRAM,
+`port/firmware/README.txt`). The modem's AT port is `/dev/wwan0at0`
 (it starts with the radio off, `+CFUN: 0`; calls, SMS and data need a SIM and are not done yet).
 
 **Your own pictures** (personal use; they stay on the watch, never in this repo): put

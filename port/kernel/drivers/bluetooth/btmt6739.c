@@ -4,8 +4,11 @@
  * travel as STP type 0 over BTIF through the CONSYS driver (soc/mediatek/mt6739-consys.c),
  * H4-framed as the vendor's /dev/stpbt carried them.
  *
- * No radio calibration from the vendor NVRAM is sent; the chip runs on its defaults.
+ * At every power-on, setup() replays stock's init for CONSYS chips (libbluetooth_mtk_pure's
+ * bt_init_script_consys) from the watch's BT NVRAM: without it the controller runs but its
+ * receiver hears nothing.
  */
+#include <linux/firmware.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
@@ -22,6 +25,23 @@ struct btmt6739 {
 	unsigned int rx_need;		/* bytes still missing */
 	bool rx_payload;		/* header done, rx_need counts the payload */
 };
+
+/*
+ * The firmware (MT0699, LMP 4.2 subversion 0x326) runs the Bluetooth 4.0 LE commands but
+ * reports octets 25-28 of Read Local Supported Commands as zero. The core then leaves the LE
+ * event mask without advertising reports, and scans find nothing. Mark them supported.
+ */
+static void btmt6739_fix_commands(struct sk_buff *skb)
+{
+	static const u8 le_cmds[] = { 0xf7, 0xff, 0xff, 0x7f };	/* octets 25-28 */
+	u8 *ev = skb->data;
+
+	if (hci_skb_pkt_type(skb) != HCI_EVENT_PKT || skb->len < 6 + 64 ||
+	    ev[0] != HCI_EV_CMD_COMPLETE || get_unaligned_le16(ev + 3) != HCI_OP_READ_LOCAL_COMMANDS ||
+	    ev[5])
+		return;
+	memcpy(ev + 6 + 25, le_cmds, sizeof(le_cmds));
+}
 
 /* H4 packets from the chip, possibly split or joined across STP packets. */
 static void btmt6739_recv(void *priv, const u8 *data, size_t len)
@@ -82,6 +102,7 @@ static void btmt6739_recv(void *priv, const u8 *data, size_t len)
 		}
 		bt->rx_skb = NULL;
 		bt->hdev->stat.byte_rx += skb->len;
+		btmt6739_fix_commands(skb);
 		hci_recv_frame(bt->hdev, skb);
 	}
 }
@@ -135,11 +156,80 @@ static int btmt6739_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 	return 0;
 }
 
+static int btmt6739_cmd(struct hci_dev *hdev, u16 opcode, const u8 *param, u32 len)
+{
+	struct sk_buff *skb = __hci_cmd_sync(hdev, opcode, len, param, HCI_INIT_TIMEOUT);
+
+	if (IS_ERR(skb)) {
+		bt_dev_err(hdev, "vendor command 0x%04x failed (%ld)", opcode, PTR_ERR(skb));
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
+	return 0;
+}
+
+/*
+ * Android's /data/nvram/APCFG/APRDEB/BT_Addr (ap_nvram_btradio_struct): address at 0 (most
+ * significant byte first), Radio[6] at 12, Sleep[7] at 18, TxPWOffset[3] at 27. The
+ * commands carry two (radio) and three (TX power) extension bytes after those, sent as zero:
+ * zero in this watch's NVRAM too, so their NVRAM offsets were not pinned down. The core's
+ * HCI Reset after setup() stands in for the reset that ends stock's script.
+ */
+#define BT_NVRAM		"mt6739-bt-nvram.bin"
+#define BT_NVRAM_ADDR		0
+#define BT_NVRAM_RADIO		12
+#define BT_NVRAM_SLEEP		18
+#define BT_NVRAM_TX_POWER	27
+
+static int btmt6739_setup(struct hci_dev *hdev)
+{
+	const struct firmware *fw;
+	const u8 *nv;
+	u8 p[8] = { };
+	int i, ret;
+
+	ret = request_firmware(&fw, BT_NVRAM, hdev->dev.parent);
+	if (ret)
+		return ret;
+	if (fw->size < BT_NVRAM_TX_POWER + 3) {
+		bt_dev_err(hdev, "%s too short (%zu bytes)", BT_NVRAM, fw->size);
+		release_firmware(fw);
+		return -EINVAL;
+	}
+	nv = fw->data;
+
+	if (memchr_inv(nv + BT_NVRAM_ADDR, 0, 6)) {
+		for (i = 0; i < 6; i++)
+			p[i] = nv[BT_NVRAM_ADDR + 5 - i];
+		ret = btmt6739_cmd(hdev, 0xfc1a, p, 6);
+	}
+	memcpy(p, nv + BT_NVRAM_RADIO, 6);
+	p[6] = p[7] = 0;
+	if (!ret)
+		ret = btmt6739_cmd(hdev, 0xfc79, p, 8);
+	memcpy(p, nv + BT_NVRAM_TX_POWER, 3);
+	memset(p + 3, 0, 3);
+	if (!ret)
+		ret = btmt6739_cmd(hdev, 0xfc93, p, 6);
+	if (!ret)
+		ret = btmt6739_cmd(hdev, 0xfc7a, nv + BT_NVRAM_SLEEP, 7);
+	release_firmware(fw);
+	return ret;
+}
+
 static int btmt6739_probe(struct platform_device *pdev)
 {
 	struct btmt6739 *bt;
 	struct hci_dev *hdev;
 	int ret;
+
+	/*
+	 * hci_register_dev() powers the device on once; if that open fails, the core never
+	 * retries and the adapter stays in setup, invisible to mgmt (bluetoothd).
+	 */
+	ret = mt6739_consys_probed();
+	if (ret)
+		return ret;
 
 	bt = devm_kzalloc(&pdev->dev, sizeof(*bt), GFP_KERNEL);
 	if (!bt)
@@ -154,7 +244,10 @@ static int btmt6739_probe(struct platform_device *pdev)
 	hdev->open = btmt6739_open;
 	hdev->close = btmt6739_close;
 	hdev->send = btmt6739_send;
+	hdev->setup = btmt6739_setup;
 	hdev->set_bdaddr = btmt6739_set_bdaddr;
+	/* Closing switches the BT function off in WMT, which forgets the setup. */
+	hci_set_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
 	platform_set_drvdata(pdev, bt);
 
 	ret = hci_register_dev(hdev);

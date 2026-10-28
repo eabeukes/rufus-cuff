@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 
+int mt6739_consys_probed(void);
 int mt6739_consys_get(void);
 void mt6739_consys_put(void);
 

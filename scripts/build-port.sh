@@ -65,9 +65,9 @@ done
 python3 "$REPO/port/pupui/gen_assets.py" "$HOME/port/pupui/assets" > /dev/null
 (cd "$HOME/port/pupui" &&
 	aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/pupui" pupui.c grownup.c theme.c assets.c -lm)
-# Wi-Fi firmware + NVRAM (from the watch itself; port/firmware/README.txt).
+# Wi-Fi firmware, Wi-Fi and BT NVRAM (from the watch itself; port/firmware/README.txt).
 mkdir -p "$root/lib/firmware"
-cp "$REPO"/port/firmware/ROMv2_lm_patch_1_*_hdr.bin "$REPO/port/firmware/WIFI_RAM_CODE_6755" 	"$REPO/port/firmware/mt6739-wlan-nvram.bin" "$root/lib/firmware/"
+cp "$REPO"/port/firmware/ROMv2_lm_patch_1_*_hdr.bin "$REPO/port/firmware/WIFI_RAM_CODE_6755" 	"$REPO/port/firmware/mt6739-wlan-nvram.bin" "$REPO/port/firmware/mt6739-bt-nvram.bin" "$root/lib/firmware/"
 # iw from Alpine (musl): loader + libnl, enough for "iw dev wlan0 scan".
 A=$HOME/port/alpine/root
 mkdir -p "$root/usr/lib"

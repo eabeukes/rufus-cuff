@@ -132,18 +132,18 @@ What it took (each one cost a debugging round):
 | Keys | working | upper button `KEY_BACK` (keypad), lower button power `KEY_POWER` (`mtk-pmic-keys`, stock long-press reset kept) |
 | Battery | gauge + charging | `mt6357-charger` (AGM) + our charge control of the PMIC linear charger: 4.2 V, 550 mA, termination, 0-45 C, OV and time limits; watchdog stop not yet verified |
 | RTC / clock | working | RTC read only, + saved offset (Linux reads the date 60 years ahead); chrony on Wi-Fi |
-| Wi-Fi | scans; joining from the UI, not yet tried on a real network | `mt6739-consys` + staging gen2, firmware/NVRAM from the watch (`port/firmware/README.txt`); grown-up mode or `wifi-add` |
+| Wi-Fi | scans and joins (from grown-up mode, tested by the owner) | `mt6739-consys` + staging gen2, firmware/NVRAM from the watch (`port/firmware/README.txt`); grown-up mode or `wifi-add` |
 | Root filesystem | working | Alpine 3.24 + OpenRC in `/data/linux/rootfs.img` (`build-rootfs.sh`, `install-rootfs.sh`), mapped by extents, Android's fs never written |
 | Power | CPU idle + cpufreq; PMIC power-off untested | PSCI idle states; `mediatek-cpufreq` 299 MHz-1.27 GHz on VPROC (AGM's OPP table, at or above this watch's stock DVFS voltages), schedutil; `mt6357-pwrc`; screen off after 60 s in the UI; low battery -> reboot to Android. Draw unchanged by cpufreq: 244 mA screen on, 198 mA off (60 s averages) |
 | Kernel | Linux 7.2.13 | AGM's 7.2.9 tree + stable 7.2.10-13 (branch `rufus-7.2.13` in WSL `~/src/linux-mt6739`) |
 | Audio | speaker + mic working | AGM's AFE/MT6357 machine driver, speaker amp = `simple-audio-amplifier` on GPIO 13; UCM profile `Rufus_Cuff`, `rufus-audio` service; loop test: mic hears a 1 kHz speaker tone 18 dB over silence |
 | Vibrator | working | `regulator-haptic` on VIBR (2.8 V, stock `vib_vol`); `vibrate MS`; accelerometer spread 0.5 -> 5.8 counts while it runs |
 | Accelerometer | working | BMA423 at I2C1 0x18 (chip ID 0x13), our IIO driver `port/kernel/drivers/iio/accel/bma423.c`: raw x/y/z, +-4 g, temperature |
-| Bluetooth | controller up, scans find nothing | `btmt6739.c` HCI over STP type 0 through the CONSYS driver (with a receive thread, send window, header checks); MT0699, LMP 4.2, BR/EDR + LE; inquiry and LE scan run without errors but report nothing: probably needs the vendor's NVRAM radio/address init (HCI vendor commands) |
+| Bluetooth | scans, bluetoothd sees it; pairing and BR/EDR discovery not checked | `btmt6739.c` HCI over STP type 0 through the CONSYS driver; at each power-on it replays stock's CONSYS init from the BT NVRAM (radio, TX power, sleep, address) and fixes the firmware's supported-commands table (LE octets reported as zero); MT0699, LMP 4.2 |
 | Back to Android | working in both layouts | `rufus-android`: LK boot mode from `/chosen/atag,boot` (little-endian u32 size/tag/mode) picks a plain reboot or `reboot recovery` (RTC boot-mode bits, `rufus-reboot`); both tested |
 | Kid UI | working | `port/pupui/` ("Pup Rescue HQ"), OpenRC service; clock in the tower, battery with charging bolt; own pictures via `theme-push.sh` (`theme.c`) |
-| Grown-up mode | working (tested by injected input) | both buttons 3 s + a sum (`grownup.c`): Wi-Fi scan/connect/forget over wpa_supplicant's control socket, terminal (pty, VT100 subset), status, brightness; screen off -> kid mode |
-| Desktop | working (tested by injected input) | Sxmo 1.18 on sway (pixman), user `rufus`, `rufus-desktop`; buttons by keycode into Sxmo's bonsai (second button = volume-up: menu; in menus Down/Return); lock or screen off -> back to the kid UI |
+| Grown-up mode | working (tested on the watch) | both buttons 3 s + a sum (`grownup.c`): Wi-Fi scan/connect/forget over wpa_supplicant's control socket, terminal (pty, VT100 subset), status, brightness; screen off -> kid mode |
+| Desktop | working (tested on the watch; touch calibrated for sway) | Sxmo 1.18 on sway (pixman), user `rufus`, `rufus-desktop`; buttons by keycode into Sxmo's bonsai (upper button = volume-up: menu; in menus Down/Return); lock or screen off -> back to the kid UI |
 
 RDMA0 in memory mode scans the simpledrm buffer directly, bypassing LK's OVL0:
 
@@ -181,7 +181,7 @@ firmware `MOLY.LR12A.R2.MP.V5.23.P10`.
 | Mobile data (LTE) | The AGM M7 (same SoC, modem branch LR12A.R2 V96.6) runs it on mainline: `mt6739-ccci`, `ccci-fsd` NVRAM service, a ModemManager plugin (`~/src/nixos-agm-m7`). | **Modem up and answering AT** (2026-10-28): Linux in `boot` so LK loads it, `ccci-fsd` with this watch's NVRAM, and the CCB control table plus the CCB/DHL raw features the vendor offers on MT6739 (without them the MD watchdog fired 33 s after HS2). `/dev/wwan0at0`: `+CFUN: 0`, no SIM fitted. Next: a SIM, `AT+CFUN=1`, registration, then data (ccmni) and ModemManager. |
 | SMS | Not done on mainline. | After data: AT `+CMGS`/`+CMGL` on the CCCI AT port; ModemManager does SMS on AT modems. |
 | Voice calls | Not done on mainline MT6739. | Modem PCM path plus audio. Large. |
-| Bluetooth | Driver written 2026-10-28 (`btmt6739.c`): controller up, LE/BR scans find nothing yet. | Replay the vendor init (radio settings and address from Android NVRAM as HCI vendor commands), then test pairing. |
+| Bluetooth | Scanning works 2026-10-28 (`btmt6739.c`, stock's init replayed, firmware command table fixed). | Pairing and a profile (e.g. audio or input) to test. |
 | GPS | Not done. STP channel 2. | The position engine (`mnld`) is closed Android userspace; the chip gives raw data. Unlikely. |
 | Accelerometer | Done 2026-10-28: BMA423, raw IIO driver. | Step counter/tilt need Bosch's feature config blob uploaded. |
 | Heart rate | Vendor driver + closed algorithm. | Unlikely. |
