@@ -885,6 +885,8 @@ int main(void)
 				while (read(in_fds[i].fd, &e, sizeof(e)) == sizeof(e)) {
 					if (e.type == EV_KEY)
 						last_input = t;
+					if (kids && e.type == EV_KEY && e.value == 1)
+						rufus_alarm_input();
 					if (e.type == EV_KEY && e.code == KEY_POWER) {
 						/*
 						 * Power toggles the screen on release, so that holding
@@ -974,14 +976,16 @@ int main(void)
 			dirty |= scene == HOME || scene == RUFUS;
 		}
 
-		/* RufusOS keeps watching notifications and the timer outside its own screens. */
-		if (!kids) {
-			int r = rufus_tick(t);
+		/* RufusOS keeps watching notifications, the timer and the alarm (also in Kids mode). */
+		{
+			int r = rufus_tick(t, kids);
 			if ((r & RUFUS_WAKE) && !screen_on) {
 				screen_on = 1;
 				sysfs_write_int(BL, saved_bl);
 				last_input = t;
 			}
+			if ((r & RUFUS_SHOW) && scene == ADULT)
+				settings_done();
 			dirty |= r && scene == RUFUS;
 		}
 

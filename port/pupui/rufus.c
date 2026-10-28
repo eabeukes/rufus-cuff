@@ -40,7 +40,7 @@
 #define F_POSITIVE 8
 #define F_NEGATIVE 16
 
-enum view { FACE, NOTES, NOTE, QUICK, APPS, PAIR, TIMER, STOPWATCH, FLASH };
+enum view { FACE, NOTES, NOTE, QUICK, APPS, PAIR, TIMER, STOPWATCH, FLASH, ALARM, ALARM_RING, CALC, GAME };
 static enum view view = FACE;
 
 /* ---------------------------------------------------------------- notifications */
@@ -400,18 +400,22 @@ static void draw_pair(long t)
 
 /* ---------------------------------------------------------------- apps grid */
 
-struct app { const char *name; const struct image *icon; };
+/* An app is a view here, or (view < 0) one of the other modes. */
+enum { A_KIDS = -1, A_SETTINGS = -2, A_TERMINAL = -3, A_DESKTOP = -4 };
+struct app { const char *name; const struct image *icon; int view; };
 static const struct app apps[] = {
-	{ "Timer", &icon_timer }, { "Stopwatch", &icon_stopwatch }, { "Flashlight", &icon_flashlight },
-	{ "Kids", &icon_kids }, { "Settings", &icon_settings }, { "Terminal", &icon_terminal },
-	{ "Desktop", &icon_desktop },
+	{ "Timer", &icon_timer, TIMER }, { "Stopwatch", &icon_stopwatch, STOPWATCH },
+	{ "Alarm", &icon_alarm, ALARM }, { "Flashlight", &icon_flashlight, FLASH },
+	{ "Calculator", &icon_calculator, CALC }, { "2048", &icon_game, GAME },
+	{ "Kids", &icon_kids, A_KIDS }, { "Settings", &icon_settings, A_SETTINGS },
+	{ "Terminal", &icon_terminal, A_TERMINAL }, { "Desktop", &icon_desktop, A_DESKTOP },
 };
 #define APP_N (int)(sizeof(apps) / sizeof(apps[0]))
 
 static void app_pos(int i, int *x, int *y)
 {
-	*x = 30 + (i % 4) * 150;
-	*y = 70 + (i / 4) * 190;
+	*x = 4 + (i % 5) * 126;		/* a 126 x 200 cell per app */
+	*y = 40 + (i / 5) * 210;
 }
 
 static void draw_apps(void)
@@ -420,8 +424,8 @@ static void draw_apps(void)
 	for (int i = 0; i < APP_N; i++) {
 		int x, y;
 		app_pos(i, &x, &y);
-		blit(apps[i].icon, x + 8, y);
-		text_mid(&font_t, x + 60, y + 114, C_TEXT, apps[i].name);
+		blit(apps[i].icon, x + 11, y);
+		text_mid(&font_t, x + 63, y + 114, C_TEXT, apps[i].name);
 	}
 }
 
@@ -526,6 +530,376 @@ static void stopwatch_touch(int x, int y, long t)
 	}
 }
 
+/* ---------------------------------------------------------------- alarm */
+
+#define ALARM_FILE "/var/lib/rufus/alarm"	/* "HOUR MINUTE ON" */
+#define SNOOZE_MS (5 * 60000L)
+#define RING_MS (2 * 60000L)		/* rings at most this long */
+
+static int al_h = 7, al_m = 0, al_on, al_loaded;
+static int al_ringing;
+static long al_ring_start, al_snooze_until, al_last_minute = -1;
+
+static void alarm_load(void)
+{
+	FILE *f = fopen(ALARM_FILE, "r");
+	al_loaded = 1;
+	if (!f)
+		return;
+	if (fscanf(f, "%d %d %d", &al_h, &al_m, &al_on) != 3 || al_h < 0 || al_h > 23 || al_m < 0 || al_m > 59)
+		al_h = 7, al_m = 0, al_on = 0;
+	fclose(f);
+}
+
+static void alarm_save(void)
+{
+	FILE *f = fopen(ALARM_FILE, "w");
+	if (f) {
+		fprintf(f, "%d %d %d\n", al_h, al_m, al_on);
+		fclose(f);
+	}
+}
+
+#define AL_HX 150	/* centres of the hour and minute columns */
+#define AL_MX 410
+
+static void draw_alarm(void)
+{
+	char s[16];
+
+	fill_rect(0, 0, W, H, C_BG);
+	button(AL_HX - 70, 20, 140, 70, "+", C_CARD2);
+	button(AL_MX - 70, 20, 140, 70, "+5", C_CARD2);
+	snprintf(s, sizeof(s), "%02d", al_h);
+	text_mid(&font_l, AL_HX, 110, al_on ? C_TEXT : C_DIM, s);
+	text_mid(&font_l, (AL_HX + AL_MX) / 2, 110, al_on ? C_TEXT : C_DIM, ":");
+	snprintf(s, sizeof(s), "%02d", al_m);
+	text_mid(&font_l, AL_MX, 110, al_on ? C_TEXT : C_DIM, s);
+	button(AL_HX - 70, 210, 140, 70, "-", C_CARD2);
+	button(AL_MX - 70, 210, 140, 70, "-5", C_CARD2);
+	button(W - 140, 100, 120, 100, al_on ? "On" : "Off", al_on ? C_GREEN : C_CARD2);
+	text_mid(&font_t, W / 2, 320, C_DIM, al_on ? "The watch buzzes at this time every day." :
+		 "Alarm off. Tap Off to switch it on.");
+	text_mid(&font_t, W / 2, 352, C_DIM, "It rings in Kids mode too (any button stops it).");
+}
+
+static void alarm_touch(int x, int y)
+{
+	if (hit(x, y, AL_HX - 70, 20, 140, 70))
+		al_h = (al_h + 1) % 24;
+	else if (hit(x, y, AL_HX - 70, 210, 140, 70))
+		al_h = (al_h + 23) % 24;
+	else if (hit(x, y, AL_MX - 70, 20, 140, 70))
+		al_m = (al_m / 5 * 5 + 5) % 60;
+	else if (hit(x, y, AL_MX - 70, 210, 140, 70))
+		al_m = (al_m / 5 * 5 + 55) % 60;
+	else if (hit(x, y, W - 140, 100, 120, 100))
+		al_on = !al_on;
+	else
+		return;
+	if (!hit(x, y, W - 140, 100, 120, 100))
+		al_on = 1;	/* changing the time means "wake me then" */
+	al_snooze_until = 0;
+	alarm_save();
+}
+
+static void draw_alarm_ring(void)
+{
+	char s[16];
+	fill_rect(0, 0, W, H, 0xff1d2a52);
+	snprintf(s, sizeof(s), "%d:%02d", al_h, al_m);
+	text_mid(&font_xl, W / 2, 20, C_TEXT, s);
+	text_mid(&font_m, W / 2, 220, C_TEXT, "Alarm");
+	button(20, 380, 290, 80, "Snooze 5 min", C_CARD2);
+	button(330, 380, 290, 80, "Stop", C_RED);
+}
+
+static void alarm_stop(int snooze, long t)
+{
+	al_ringing = 0;
+	al_snooze_until = snooze ? t + SNOOZE_MS : 0;
+}
+
+/* Called from rufus_tick: start ringing at the alarm time (or when a snooze ends). */
+static int alarm_check(long t)
+{
+	time_t now = time(NULL);
+	struct tm tm;
+
+	if (!al_loaded)
+		alarm_load();
+	localtime_r(&now, &tm);
+	long minute = now / 60;
+	if (al_ringing) {
+		if (t - al_ring_start > RING_MS)
+			alarm_stop(0, t);
+		return 0;
+	}
+	int due = al_on && tm.tm_year + 1900 >= 2026 && tm.tm_hour == al_h && tm.tm_min == al_m &&
+		  minute != al_last_minute;
+	if (al_snooze_until && t >= al_snooze_until) {
+		al_snooze_until = 0;
+		due = 1;
+	}
+	if (!due)
+		return 0;
+	al_last_minute = minute;
+	al_ringing = 1;
+	al_ring_start = t;
+	return 1;
+}
+
+void rufus_alarm_input(void)
+{
+	if (al_ringing)
+		alarm_stop(0, 0);
+}
+
+/* ---------------------------------------------------------------- calculator */
+
+static double calc_acc;
+static char calc_op;		/* pending operator, 0 for none */
+static char calc_in[24] = "0";	/* the number being typed or shown */
+static int calc_fresh = 1;	/* the next digit starts a new number */
+
+static const char *const calc_keys[20] = {
+	"7", "8", "9", "/", "C",
+	"4", "5", "6", "x", "<",
+	"1", "2", "3", "-", "+/-",
+	"0", ".", "=", "+", "%",
+};
+
+#define CK_W 118
+#define CK_H 82
+#define CK_Y 104
+
+static void calc_show(double v)
+{
+	if (v != v || v > 1e15 || v < -1e15)
+		snprintf(calc_in, sizeof(calc_in), "Error");
+	else
+		snprintf(calc_in, sizeof(calc_in), "%.10g", v);
+}
+
+static void calc_apply(void)
+{
+	double b = atof(calc_in);
+	switch (calc_op) {
+	case '+': calc_acc += b; break;
+	case '-': calc_acc -= b; break;
+	case 'x': calc_acc *= b; break;
+	case '/': calc_acc = b == 0 ? 0.0 / 0.0 : calc_acc / b; break;
+	default: calc_acc = b; break;
+	}
+	calc_show(calc_acc);
+}
+
+static void calc_key(const char *k)
+{
+	size_t n = strlen(calc_in);
+
+	if (!strcmp(calc_in, "Error") && strcmp(k, "C"))
+		return;
+	if ((k[0] >= '0' && k[0] <= '9') || !strcmp(k, ".")) {
+		if (calc_fresh) {
+			snprintf(calc_in, sizeof(calc_in), "%s", k[0] == '.' ? "0." : k);
+			calc_fresh = 0;
+		} else if (n < 15 && !(k[0] == '.' && strchr(calc_in, '.'))) {
+			if (!strcmp(calc_in, "0") && k[0] != '.')
+				n = 0;
+			snprintf(calc_in + n, sizeof(calc_in) - n, "%s", k);
+		}
+	} else if (!strcmp(k, "C")) {
+		calc_acc = 0, calc_op = 0, calc_fresh = 1;
+		snprintf(calc_in, sizeof(calc_in), "0");
+	} else if (!strcmp(k, "<")) {
+		if (!calc_fresh && n > 1)
+			calc_in[n - 1] = 0;
+		else if (!calc_fresh)
+			snprintf(calc_in, sizeof(calc_in), "0");
+	} else if (!strcmp(k, "+/-")) {
+		calc_show(-atof(calc_in));
+	} else if (!strcmp(k, "%")) {
+		calc_show(atof(calc_in) / 100);
+	} else {	/* + - x / = */
+		if (!calc_fresh || !calc_op)
+			calc_apply();
+		calc_op = k[0] == '=' ? 0 : k[0];
+		calc_fresh = 1;
+	}
+}
+
+static void draw_calc(void)
+{
+	char s[32];
+
+	fill_rect(0, 0, W, H, C_BG);
+	fill_rrect(12, 12, W - 24, 84, 14, C_CARD);
+	if (calc_op) {
+		snprintf(s, sizeof(s), "%.10g %c", calc_acc, calc_op);
+		text(&font_t, 28, 20, C_DIM, s);
+	}
+	text(&font_m, W - 32 - text_width(&font_m, calc_in), 36, C_TEXT, calc_in);
+	for (int i = 0; i < 20; i++) {
+		int c = i % 5;
+		uint32_t bg = c == 4 ? 0xff3a2f2f : c == 3 || i == 17 ? C_ACCENT : C_CARD2;
+		button(12 + c * (CK_W + 6), CK_Y + i / 5 * (CK_H + 6), CK_W, CK_H, calc_keys[i], bg);
+	}
+}
+
+static void calc_touch(int x, int y)
+{
+	for (int i = 0; i < 20; i++)
+		if (hit(x, y, 12 + i % 5 * (CK_W + 6), CK_Y + i / 5 * (CK_H + 6), CK_W, CK_H))
+			calc_key(calc_keys[i]);
+}
+
+/* ---------------------------------------------------------------- 2048 */
+
+#define BEST_FILE "/var/lib/rufus/2048-best"
+#define G_CELL 106
+#define G_X 16
+#define G_Y 16
+
+static int grid[4][4], g_score, g_best = -1, g_over, g_won, g_started;
+
+static void g_add(void)
+{
+	int free_n = 0;
+	for (int i = 0; i < 16; i++)
+		free_n += !grid[i / 4][i % 4];
+	if (!free_n)
+		return;
+	int k = rnd(free_n);
+	for (int i = 0; i < 16; i++)
+		if (!grid[i / 4][i % 4] && k-- == 0)
+			grid[i / 4][i % 4] = rnd(10) ? 2 : 4;
+}
+
+static void g_new(void)
+{
+	memset(grid, 0, sizeof(grid));
+	g_score = g_over = g_won = 0;
+	g_started = 1;
+	g_add();
+	g_add();
+	if (g_best < 0) {
+		FILE *f = fopen(BEST_FILE, "r");
+		g_best = 0;
+		if (f) {
+			if (fscanf(f, "%d", &g_best) != 1)
+				g_best = 0;
+			fclose(f);
+		}
+	}
+}
+
+/* Slide and merge one row of 4 towards index 0; returns 1 if anything moved. */
+static int g_line(int *c[4])
+{
+	int v[4] = { 0 }, n = 0, moved = 0;
+	for (int i = 0; i < 4; i++)
+		if (*c[i])
+			v[n++] = *c[i];
+	for (int i = 0; i + 1 < n; i++)
+		if (v[i] == v[i + 1]) {
+			v[i] *= 2;
+			g_score += v[i];
+			if (v[i] == 2048)
+				g_won = 1;
+			memmove(v + i + 1, v + i + 2, (n - i - 2) * sizeof(int));
+			v[--n] = 0;
+		}
+	for (int i = 0; i < 4; i++) {
+		moved |= *c[i] != v[i];
+		*c[i] = v[i];
+	}
+	return moved;
+}
+
+/* dir: 0 left, 1 right, 2 up, 3 down */
+static int g_move(int dir)
+{
+	int moved = 0;
+	for (int k = 0; k < 4; k++) {
+		int *c[4];
+		for (int i = 0; i < 4; i++) {
+			int j = dir == 1 || dir == 3 ? 3 - i : i;
+			c[i] = dir < 2 ? &grid[k][j] : &grid[j][k];
+		}
+		moved |= g_line(c);
+	}
+	return moved;
+}
+
+static int g_stuck(void)
+{
+	for (int r = 0; r < 4; r++)
+		for (int c = 0; c < 4; c++)
+			if (!grid[r][c] || (c < 3 && grid[r][c] == grid[r][c + 1]) ||
+			    (r < 3 && grid[r][c] == grid[r + 1][c]))
+				return 0;
+	return 1;
+}
+
+static void g_swipe(int dir)
+{
+	if (g_over || !g_move(dir))
+		return;
+	g_add();
+	if (g_score > g_best) {
+		FILE *f = fopen(BEST_FILE, "w");
+		g_best = g_score;
+		if (f) {
+			fprintf(f, "%d\n", g_best);
+			fclose(f);
+		}
+	}
+	g_over = g_stuck();
+}
+
+static uint32_t g_colour(int v)
+{
+	static const uint32_t c[] = { 0xff3a3f4a, 0xffeee4da, 0xffede0c8, 0xfff2b179, 0xfff59563,
+				      0xfff67c5f, 0xfff65e3b, 0xffedcf72, 0xffedcc61, 0xffedc850,
+				      0xffedc53f, 0xffedc22e };
+	int i = 0;
+	while (v > 1 && i < 11)
+		v >>= 1, i++;
+	return c[i];
+}
+
+static void draw_game(void)
+{
+	char s[32];
+
+	fill_rect(0, 0, W, H, C_BG);
+	fill_rrect(G_X - 6, G_Y - 6, 4 * G_CELL + 6, 4 * G_CELL + 6, 14, 0xff262a33);
+	for (int r = 0; r < 4; r++)
+		for (int c = 0; c < 4; c++) {
+			int v = grid[r][c], x = G_X + c * G_CELL, y = G_Y + r * G_CELL;
+			fill_rrect(x, y, G_CELL - 6, G_CELL - 6, 10, g_colour(v));
+			if (!v)
+				continue;
+			snprintf(s, sizeof(s), "%d", v);
+			const struct font *f = v < 100 ? &font_m : v < 10000 ? &font_s : &font_t;
+			text_mid(f, x + (G_CELL - 6) / 2, y + (G_CELL - 6 - f->height) / 2,
+				 v <= 4 ? 0x5a5048 : 0xffffff, s);
+		}
+	int px = G_X + 4 * G_CELL + 12, pw = W - px - 12;
+	text_mid(&font_t, px + pw / 2, 30, C_DIM, "Score");
+	snprintf(s, sizeof(s), "%d", g_score);
+	text_mid(&font_s, px + pw / 2, 58, C_TEXT, s);
+	text_mid(&font_t, px + pw / 2, 120, C_DIM, "Best");
+	snprintf(s, sizeof(s), "%d", g_best);
+	text_mid(&font_s, px + pw / 2, 148, C_TEXT, s);
+	if (g_over)
+		text_mid(&font_s, px + pw / 2, 230, 0xff8a80, "No moves");
+	else if (g_won)
+		text_mid(&font_s, px + pw / 2, 230, 0xffd75e, "2048!");
+	button(px, 380, pw, 80, "New", C_CARD2);
+}
+
 /* ---------------------------------------------------------------- navigation */
 
 static int flash_saved;
@@ -542,6 +916,8 @@ static void go(enum view v)
 		note_scroll = 0;
 		seen_time = newest_time;
 	}
+	if (v == GAME && !g_started)
+		g_new();
 	view = v;
 }
 
@@ -556,21 +932,20 @@ void rufus_back(void)
 	case NOTE: go(NOTES); break;
 	case FLASH: go(QUICK); break;
 	case PAIR: go(QUICK); break;
-	case TIMER: case STOPWATCH: go(APPS); break;
+	case TIMER: case STOPWATCH: case ALARM: case CALC: case GAME: go(APPS); break;
+	case ALARM_RING: alarm_stop(0, 0); go(FACE); break;
 	default: go(FACE); break;
 	}
 }
 
 static void open_app(int i)
 {
-	switch (i) {
-	case 0: go(TIMER); break;
-	case 1: go(STOPWATCH); break;
-	case 2: go(FLASH); break;
-	case 3: kids_enter(); break;
-	case 4: settings_open(SETTINGS_MENU); break;
-	case 5: settings_open(SETTINGS_TERMINAL); break;
-	case 6: settings_open(SETTINGS_DESKTOP); break;
+	switch (apps[i].view) {
+	case A_KIDS: kids_enter(); break;
+	case A_SETTINGS: settings_open(SETTINGS_MENU); break;
+	case A_TERMINAL: settings_open(SETTINGS_TERMINAL); break;
+	case A_DESKTOP: settings_open(SETTINGS_DESKTOP); break;
+	default: go(apps[i].view); break;
 	}
 }
 
@@ -700,6 +1075,28 @@ void rufus_touch(int ev, int x, int y, long t)
 	case FLASH:
 		go(QUICK);	/* any tap ends it */
 		break;
+	case ALARM:
+		if (!swipe)
+			alarm_touch(x, y);
+		break;
+	case ALARM_RING:
+		if (swipe)
+			break;
+		if (hit(x, y, 20, 380, 290, 80) || hit(x, y, 330, 380, 290, 80)) {
+			alarm_stop(hit(x, y, 20, 380, 290, 80), t);
+			go(FACE);
+		}
+		break;
+	case CALC:
+		if (!swipe)
+			calc_touch(x, y);
+		break;
+	case GAME:
+		if (swipe)
+			g_swipe(horiz ? (dx < 0 ? 0 : 1) : (dy < 0 ? 2 : 3));
+		else if (hit(x, y, G_X + 4 * G_CELL + 12, 380, W - G_X - 4 * G_CELL - 24, 80))
+			g_new();
+		break;
 	}
 }
 
@@ -715,6 +1112,10 @@ void rufus_draw(long t)
 	case TIMER: draw_timer(t); break;
 	case STOPWATCH: draw_stopwatch(t); break;
 	case FLASH: fill_rect(0, 0, W, H, 0xffffffff); break;
+	case ALARM: draw_alarm(); break;
+	case ALARM_RING: draw_alarm_ring(); break;
+	case CALC: draw_calc(); break;
+	case GAME: draw_game(); break;
 	}
 	draw_banner(t);
 }
@@ -725,12 +1126,34 @@ int rufus_animating(void)
 	return (view == TIMER && timer_run) || (view == STOPWATCH && sw_run) || view == PAIR;
 }
 
-/* Background work, called on every loop: RUFUS_REDRAW and/or RUFUS_WAKE (turn the screen on). */
-int rufus_tick(long t)
+/*
+ * Background work, called on every loop, in Kids mode too (kids: the alarm only).
+ * Returns RUFUS_REDRAW, RUFUS_WAKE (turn the screen on), RUFUS_SHOW (bring RufusOS forward).
+ */
+int rufus_tick(long t, int kids)
 {
-	static long last_check, last_minute, ring_buzz;
+	static long last_check, last_minute, ring_buzz, alarm_buzz;
 	struct stat st;
 	int r = 0;
+
+	if (alarm_check(t)) {
+		alarm_buzz = 0;
+		r |= RUFUS_WAKE | RUFUS_REDRAW;
+		if (!kids) {
+			go(ALARM_RING);
+			r |= RUFUS_SHOW;
+		}
+	}
+	if (al_ringing && t - alarm_buzz > 2000) {
+		alarm_buzz = t;
+		vibrate(900);
+	}
+	if (!al_ringing && view == ALARM_RING) {
+		go(FACE);	/* stopped by a button, or rang long enough */
+		r |= RUFUS_REDRAW;
+	}
+	if (kids)
+		return r;
 
 	if (t - last_check >= 500) {
 		last_check = t;
@@ -764,8 +1187,8 @@ int rufus_tick(long t)
 		banner_until = 0;
 		r |= RUFUS_REDRAW;
 	}
-	if (t / 60000 != last_minute) {	/* the face's clock */
-		last_minute = t / 60000;
+	if (time(NULL) / 60 != last_minute) {	/* the face's clock, on the minute */
+		last_minute = time(NULL) / 60;
 		r |= RUFUS_REDRAW;
 	}
 	return r;

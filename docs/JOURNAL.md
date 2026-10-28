@@ -497,3 +497,11 @@ Each of these cost a debugging round:
 - Correction: that test showed the console upside down against pupui. Only pupui's drawing had
   been 180° off; `fbcon=rotate:3` was right and is back (the owner had said the boot text was
   correct).
+- RufusOS apps: Alarm (`/var/lib/rufus/alarm`: hour, minute, on; rings daily: wakes the screen,
+  buzzes every 2 s for up to 2 min, Stop or Snooze 5 min; in Kids mode it rings too and any
+  button or touch stops it, so the ring screen is no way out of Kids mode), Calculator
+  (left-to-right like a basic calculator: 12 + 3 x 4 = 60), 2048 (best score in
+  `/var/lib/rufus/2048-best`). The app grid holds 10, five per row. Tested on the watch with
+  injected taps and swipes; the alarm with the screen off, and the owner felt it buzz.
+- The face's clock redrew every 60 s of monotonic time, so it could show the old minute for up
+  to a minute; it now follows the wall-clock minute.

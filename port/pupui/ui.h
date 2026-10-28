@@ -41,11 +41,13 @@ void bye(void);			/* clean reboot, back to Android */
 /* rufus.c: RufusOS, the main UI. */
 #define RUFUS_REDRAW 1
 #define RUFUS_WAKE 2
+#define RUFUS_SHOW 4		/* bring RufusOS forward (the alarm rings) */
 void rufus_enter(void);
 void rufus_draw(long t);
 void rufus_touch(int ev, int x, int y, long t);
 void rufus_back(void);
-int rufus_tick(long t);		/* RUFUS_REDRAW | RUFUS_WAKE */
+int rufus_tick(long t, int kids);	/* RUFUS_REDRAW | RUFUS_WAKE | RUFUS_SHOW */
+void rufus_alarm_input(void);	/* a button or touch in Kids mode: stop a ringing alarm */
 int rufus_animating(void);
 
 /* grownup.c: Settings (Wi-Fi, terminal, status, desktop), and the sum gate out of Kids mode. */
