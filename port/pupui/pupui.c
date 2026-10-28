@@ -1,14 +1,16 @@
 /*
- * pupui: "Pup Rescue HQ", a kids' launcher and games for the Rufus Cuff (Linux).
+ * pupui: the Rufus Cuff's UI. RufusOS (rufus.c) is the main mode; this file has the main
+ * loop and Kids mode, "Pup Rescue HQ", a kids' launcher and games.
  *
  * Draws on /dev/fb0 (480x640 portrait XRGB, panel mounted sideways) as a 640x480
  * landscape canvas: canvas (x, y) -> framebuffer column y, row 639 - x, so the picture is
  * upright with the watch's buttons on the right. Touch arrives already in canvas
  * coordinates (edt-ft5x06 with inverted-x + swapped-x-y in the DT).
  *
- * Buttons: upper button (KEY_BACK; worn buttons-right) = home; hold it 3 s = reboot (back to Android).
- *          power (KEY_POWER, short press) = screen off/on.
- *          hold both 3 s = grown-up mode (grownup.c), after a sum.
+ * Buttons: upper button (KEY_BACK; worn buttons-right) = home/back; hold it 3 s = reboot (back
+ *          to Android). Lower (KEY_POWER, short press) = screen off/on. In Kids mode, holding
+ *          both 3 s and answering a sum (grownup.c) returns to RufusOS.
+ * Starts in RufusOS, or in Kids mode when START_KIDS exists (Settings > Start in Kids).
  * Games: Pup Pop (tap the pups), Badge Match (memory), Paint, Pup Parade.
  * All built-in artwork is original (gen_assets.py); theme.c can replace it.
  */
@@ -271,10 +273,10 @@ static int adc_read_bat(void)
 }
 
 #define PSY "/sys/class/power_supply/"
-static int plugged;	/* charger connected: draw the bolt */
+int plugged;	/* charger connected: draw the bolt */
 
 /* The fuel gauge's capacity; without it, a rough estimate from the battery voltage. */
-static int battery_pct(void)
+int battery_pct(void)
 {
 	static const int mv_tab[11] = {3400, 3600, 3700, 3750, 3790, 3830, 3870, 3920, 3980, 4060, 4200};
 	int pct = sysfs_read_int(PSY "battery/capacity");
@@ -353,8 +355,9 @@ static void input_open(void)
 
 /* ---------------------------------------------------------------- scenes */
 
-enum scene { HOME, POP, MATCH, PAINT, PARADE, ADULT };
+enum scene { HOME, POP, MATCH, PAINT, PARADE, ADULT, RUFUS };
 static enum scene scene = HOME;
+static int kids;		/* Kids mode: the pups, locked behind the sum gate */
 static int battery = -1;
 
 /* Home: four tiles. */
@@ -723,12 +726,48 @@ static void enter(enum scene s)
 		parade_start();
 	else if (s == ADULT)
 		adult_enter();
+	else if (s == RUFUS)
+		rufus_enter();
 }
 
 void kid_home(void)
 {
 	adult_leave();
 	enter(HOME);
+}
+
+void kids_enter(void)
+{
+	kids = 1;
+	enter(HOME);
+}
+
+void kids_unlock(void)
+{
+	adult_leave();
+	kids = 0;
+	enter(RUFUS);
+}
+
+void settings_open(int what)
+{
+	scene = ADULT;
+	adult_open(what);
+}
+
+void settings_done(void)
+{
+	adult_leave();
+	enter(RUFUS);
+}
+
+/* The screen went off (power or timeout): end Settings, start again from the face. */
+static void screen_off_reset(void)
+{
+	if (scene == ADULT && kids)
+		kid_home();
+	else if (scene == ADULT || scene == RUFUS)
+		settings_done();
 }
 
 /* Back to Android: a clean reboot. */
@@ -762,7 +801,7 @@ void bye(void)
 
 static void handle_touch(int ev, int x, int y, long t)
 {
-	if (scene != HOME && scene != ADULT && ev == EV_DOWN && in_home_button(x, y)) {
+	if (scene != HOME && scene != ADULT && scene != RUFUS && ev == EV_DOWN && in_home_button(x, y)) {
 		enter(HOME);
 		return;
 	}
@@ -795,6 +834,9 @@ static void handle_touch(int ev, int x, int y, long t)
 	case ADULT:
 		adult_touch(ev, x, y, t);
 		break;
+	case RUFUS:
+		rufus_touch(ev, x, y, t);
+		break;
 	}
 }
 
@@ -809,6 +851,8 @@ int main(void)
 	theme_load();
 	paint_clear();
 	battery = battery_pct();
+	kids = access(START_KIDS, F_OK) == 0;
+	enter(kids ? HOME : RUFUS);
 
 	int screen_on = 1;
 	long back_down = 0, power_down = 0, last_batt = now_ms(), last_frame = 0, last_input = now_ms();
@@ -820,7 +864,8 @@ int main(void)
 
 	for (;;) {
 		long t = now_ms();
-		int animating = scene == POP || scene == PARADE || (scene == MATCH && mt.second >= 0);
+		int animating = scene == POP || scene == PARADE || (scene == MATCH && mt.second >= 0) ||
+				(scene == RUFUS && rufus_animating());
 		int timeout = !screen_on ? 1000 : animating ? 33 : 500;
 		int n = in_n;
 
@@ -851,8 +896,8 @@ int main(void)
 							if (power_down && !combo) {
 								screen_on = !screen_on;
 								sysfs_write_int(BL, screen_on ? saved_bl : 0);
-								if (!screen_on && scene == ADULT)
-									kid_home();
+								if (!screen_on)
+									screen_off_reset();
 								dirty = 1;
 							}
 							power_down = 0;
@@ -873,6 +918,8 @@ int main(void)
 							if (back_down && !combo && screen_on) {
 								if (scene == ADULT)
 									adult_back();
+								else if (scene == RUFUS)
+									rufus_back();
 								else if (scene != HOME)
 									enter(HOME);
 								dirty = 1;
@@ -905,15 +952,14 @@ int main(void)
 		if (screen_on && t - last_input > SCREEN_TIMEOUT_MS) {
 			screen_on = 0;
 			sysfs_write_int(BL, 0);
-			if (scene == ADULT)
-				kid_home();
+			screen_off_reset();
 		}
 
-		/* Both buttons held 3 s: grown-up mode (the sum comes first). */
+		/* Both buttons held 3 s in Kids mode: the sum, then RufusOS. */
 		if (back_down && power_down && !combo &&
 		    t - (back_down > power_down ? back_down : power_down) > 3000) {
 			combo = 1;
-			if (scene != ADULT)
+			if (kids && scene != ADULT)
 				enter(ADULT);
 			dirty = 1;
 		}
@@ -925,7 +971,18 @@ int main(void)
 		if (t - last_batt > 30000) {
 			battery = battery_pct();
 			last_batt = t;
-			dirty |= scene == HOME;
+			dirty |= scene == HOME || scene == RUFUS;
+		}
+
+		/* RufusOS keeps watching notifications and the timer outside its own screens. */
+		if (!kids) {
+			int r = rufus_tick(t);
+			if ((r & RUFUS_WAKE) && !screen_on) {
+				screen_on = 1;
+				sysfs_write_int(BL, saved_bl);
+				last_input = t;
+			}
+			dirty |= r && scene == RUFUS;
 		}
 
 		if (scene == POP)
@@ -946,6 +1003,7 @@ int main(void)
 		case PAINT: draw_paint(); break;
 		case PARADE: draw_parade(t); break;
 		case ADULT: adult_draw(); break;
+		case RUFUS: rufus_draw(t); break;
 		}
 		present();
 		last_frame = t;

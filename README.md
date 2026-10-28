@@ -25,12 +25,12 @@ Wi-Fi/BT MACs and radio calibration. The stock firmware does not contain them. K
 The bootloader boots unsigned `boot`/`recovery` images even though it reports "locked".
 See `PORT-PLAN.md` for that, the unbrick path (SP Flash Tool) and the port plan.
 
-## Mainline Linux (in `recovery`)
+## Mainline Linux
 
-Linux 7.2.9 boots from the `recovery` partition (`adb reboot recovery`; the next reset is Android
-again) into Alpine Linux with display, backlight, touch, buttons, charging and fuel gauge, clock,
-Wi-Fi, SSH, the kid UI "Pup Rescue HQ" (`port/pupui/`) and a grown-up mode behind it. Status: `PORT-PLAN.md`; history:
-`docs/JOURNAL.md`.
+Linux 7.2 boots into Alpine Linux with display, touch, buttons, charging and fuel gauge, clock,
+Wi-Fi, Bluetooth, audio, vibrator, accelerometer, the modem (AT only so far), SSH, and RufusOS:
+a watch UI with iPhone notifications (`port/pupui/`), with the kids' "Pup Rescue HQ" as a locked
+Kids mode inside it. Status: `PORT-PLAN.md`; history: `docs/JOURNAL.md`.
 
 Build (WSL) and install (Git Bash, watch in Android with adb):
 
@@ -44,7 +44,7 @@ adb reboot
 ```
 
 Since 2026-10-28 Linux is in `boot` (so LK loads the modem) and stock Android is in `recovery`:
-power-on starts Linux; "back to Android" (3 s hold, grown-up menu, low battery) reboots into
+power-on starts Linux; "back to Android" (3 s hold, Settings, low battery) reboots into
 recovery; Android's own reboot comes back to Linux. adb works from Android, so flashing is done
 from there. To undo: `scripts/flash-boot.sh images/boot-fast/boot-slub-off.img` and
 `scripts/flash-recovery.sh images/linux/recovery-linux.img`.
@@ -61,13 +61,25 @@ back to Android. Back up Linux with `adb pull /data/linux/rootfs.img` (it holds 
 passwords: keep it private); delete `/data/linux/rootfs.map` (from Android) to stop booting into
 it. Without an installed rootfs, Linux runs from its initramfs and returns to Android after 120 s.
 
-**Grown-up mode:** hold both buttons for 3 s, then answer the sum. Wi-Fi (scan, password
-keyboard, forget), a terminal, battery/system status and brightness, Desktop (Sxmo on sway),
-back to kid mode, reboot to Android. The screen turning off always returns to kid mode.
-`wifi-add "SSID" "password"` in a shell does the same as the Wi-Fi screen. In the desktop (Sxmo),
-the upper button opens the menu and touch selects; power (or idle) ends it and returns to the
-pups. Sxmo's own Wi-Fi and modem menus do nothing here (no NetworkManager or ModemManager): use
-grown-up mode for Wi-Fi.
+**RufusOS** (layout borrowed from AsteroidOS): the watch face; swipe up for notifications (tap
+one for the text and the phone's own buttons, e.g. Clear, or Answer/Decline for calls), swipe
+down for quick settings (brightness, Quiet, Pair iPhone, flashlight), swipe left for apps
+(Timer, Stopwatch, Flashlight, Kids, Settings, Terminal, Desktop). Upper button: back; lower:
+screen off. New notifications wake the screen, buzz and show a banner.
+**Kids mode** is the pups; leaving it takes both buttons held 3 s and a sum.
+**Settings**: Wi-Fi (scan, password keyboard, forget), terminal, status, Desktop (Sxmo on
+sway), Start in Kids (boot default), reboot to Android. `wifi-add "SSID" "password"` in a shell
+does the same as the Wi-Fi screen. In the desktop (Sxmo), the upper button opens the menu and
+touch selects; power (or idle) ends it. Sxmo's own Wi-Fi and modem menus do nothing here (no
+NetworkManager or ModemManager).
+
+**iPhone notifications** (`rufus-ancs`, Apple's ANCS over Bluetooth LE): Quick settings > Pair
+iPhone opens pairing for two minutes. On the iPhone, connect once to "Rufus Cuff" with a BLE app
+(nRF Connect), tap Pair when the watch shows the same code, then switch on Share System
+Notifications in the iPhone's Bluetooth settings for Rufus Cuff. After that it reconnects by
+itself. Replies are not possible over ANCS (only clear, answer and decline).
+
+![RufusOS watch face](docs/img/rufus-face.png) ![RufusOS apps](docs/img/rufus-apps.png)
 
 In a shell: `vibrate 500` (motor), `aplay file.wav` / `arecord` (speaker, mic),
 `/sys/bus/iio/devices/*/in_accel_*_raw` (accelerometer), `bluetoothctl` (bluetoothd starts at boot,

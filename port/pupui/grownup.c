@@ -1,10 +1,10 @@
 /*
- * pupui grown-up mode: behind a sum, reached by holding both buttons for 3 s.
+ * RufusOS Settings, and the sum gate that ends Kids mode (both buttons held 3 s).
  *
  * Menu: Wi-Fi (scan, connect with an on-screen keyboard, forget), Terminal (a shell
  * on a pty), Status (battery, memory, storage, brightness), Desktop (if installed),
- * Kid mode, Android. The second button goes up one level; the screen turning off
- * (timeout or power) returns to kid mode and ends the shell.
+ * Start in Kids (boot default), Android. The upper button goes up one level; the screen
+ * turning off (timeout or power) returns to RufusOS (or the pups) and ends the shell.
  *
  * Wi-Fi talks to wpa_supplicant's control socket directly, so SSIDs and passwords
  * never pass through a shell. Passwords are not logged.
@@ -47,24 +47,28 @@ static char msg[160];		/* one-line notice under the title */
 
 /* ---------------------------------------------------------------- widgets */
 
-static int hit(int x, int y, int bx, int by, int bw, int bh)
+int hit(int x, int y, int bx, int by, int bw, int bh)
 {
 	return x >= bx && x < bx + bw && y >= by && y < by + bh;
 }
 
-static void text_mid(const struct font *f, int cx, int y, uint32_t c, const char *s)
+void text_mid(const struct font *f, int cx, int y, uint32_t c, const char *s)
 {
 	text(f, cx - text_width(f, s) / 2, y, c, s);
 }
 
 /* s cut to fit in w pixels (with ".." when cut). */
-static const char *fit(const struct font *f, const char *s, int w)
+const char *fit(const struct font *f, const char *s, int w)
 {
 	static char buf[160];
 	snprintf(buf, sizeof(buf), "%s", s);
 	if (text_width(f, buf) <= w)
 		return buf;
-	for (int n = strlen(buf); n > 0; n--) {
+	/* Leave room for ".." and the terminator: buf can be full after the snprintf. */
+	int n = strlen(buf);
+	if (n > (int)sizeof(buf) - 3)
+		n = sizeof(buf) - 3;
+	for (; n > 0; n--) {
 		strcpy(buf + n, "..");
 		if (text_width(f, buf) <= w)
 			break;
@@ -72,7 +76,7 @@ static const char *fit(const struct font *f, const char *s, int w)
 	return buf;
 }
 
-static void button(int x, int y, int w, int h, const char *label, uint32_t bg)
+void button(int x, int y, int w, int h, const char *label, uint32_t bg)
 {
 	fill_rrect(x, y, w, h, 12, bg);
 	text_mid(&font_s, x + w / 2, y + (h - font_s.height) / 2, C_TEXT, label);
@@ -278,7 +282,7 @@ static void gate_touch(int ev, int x, int y)
 				gate_in[n - 1] = 0;
 		} else if (i == 11) {
 			if (atoi(gate_in) == gate_a * gate_b) {
-				screen = MENU;
+				kids_unlock();
 			} else if (--gate_tries == 0) {
 				kid_home();
 			} else {
@@ -1092,7 +1096,7 @@ void adult_io(void)
 
 /* ---------------------------------------------------------------- menu */
 
-static const char *const menu_items[6] = { "Wi-Fi", "Terminal", "Status", "Desktop", "Kid mode", "Android" };
+static const char *const menu_items[6] = { "Wi-Fi", "Terminal", "Status", "Desktop", "Start in Kids", "Android" };
 
 static void menu_rect(int i, int *x, int *y) { *x = 20 + (i % 2) * 310; *y = 72 + (i / 2) * 136; }
 
@@ -1101,12 +1105,12 @@ static void menu_draw(void)
 	char sub[6][110];
 
 	fill_rect(0, 0, W, H, C_BG);
-	title_bar("Grown-up mode", 0);
+	title_bar("Settings", 1);
 	snprintf(sub[0], sizeof(sub[0]), "%s", !wpa_up ? "not running" : cur_ssid[0] ? cur_ssid : "not connected");
 	snprintf(sub[1], sizeof(sub[1]), "%s", tfd >= 0 ? "shell running" : "root shell");
 	snprintf(sub[2], sizeof(sub[2]), "battery %d %%", sysfs_read_int(PSY "battery/capacity"));
 	snprintf(sub[3], sizeof(sub[3]), "%s", access(DESKTOP, X_OK) ? "not installed" : "Sxmo");
-	snprintf(sub[4], sizeof(sub[4]), "back to the pups");
+	snprintf(sub[4], sizeof(sub[4]), "%s", access(START_KIDS, F_OK) ? "off: starts in RufusOS" : "on: starts with the pups");
 	snprintf(sub[5], sizeof(sub[5]), "reboot");
 	for (int i = 0; i < 6; i++) {
 		int x, y;
@@ -1125,6 +1129,50 @@ static void android_choice(int b)
 		bye();
 }
 
+static void menu_pick(int i, long t)
+{
+	msg[0] = 0;
+	switch (i) {
+	case 0:
+		screen = WIFI;
+		wifi_status();
+		if (!net_n && wpa_up)
+			wifi_scan(t);
+		break;
+	case 1:
+		screen = TERM;
+		kb_reset();
+		if (tfd < 0)
+			t_start();
+		break;
+	case 2:
+		screen = STATUS;
+		wifi_status();
+		status_read();
+		break;
+	case 3:
+		if (access(DESKTOP, X_OK)) {
+			snprintf(msg, sizeof(msg), "No desktop installed (%s)", DESKTOP);
+			break;
+		}
+		/* The desktop takes over the display; pupui comes back when it exits. */
+		adult_leave();
+		execl(DESKTOP, DESKTOP, (char *)NULL);
+		screen = MENU;
+		snprintf(msg, sizeof(msg), "Could not start the desktop");
+		break;
+	case 4:
+		if (access(START_KIDS, F_OK) == 0)
+			unlink(START_KIDS);
+		else
+			close(open(START_KIDS, O_CREAT | O_WRONLY, 0644));
+		break;
+	case 5:
+		dialog("Reboot to Android?", 2, "Reboot", "Cancel", NULL, android_choice);
+		break;
+	}
+}
+
 static void menu_touch(int ev, int x, int y, long t)
 {
 	if (ev != EV_UP)
@@ -1132,45 +1180,8 @@ static void menu_touch(int ev, int x, int y, long t)
 	for (int i = 0; i < 6; i++) {
 		int bx, by;
 		menu_rect(i, &bx, &by);
-		if (!hit(x, y, bx, by, 290, 120))
-			continue;
-		msg[0] = 0;
-		switch (i) {
-		case 0:
-			screen = WIFI;
-			wifi_status();
-			if (!net_n && wpa_up)
-				wifi_scan(t);
-			break;
-		case 1:
-			screen = TERM;
-			kb_reset();
-			if (tfd < 0)
-				t_start();
-			break;
-		case 2:
-			screen = STATUS;
-			wifi_status();
-			status_read();
-			break;
-		case 3:
-			if (access(DESKTOP, X_OK)) {
-				snprintf(msg, sizeof(msg), "No desktop installed (%s)", DESKTOP);
-				break;
-			}
-			/* The desktop takes over the display; pupui comes back when it exits. */
-			adult_leave();
-			execl(DESKTOP, DESKTOP, (char *)NULL);
-			screen = MENU;
-			snprintf(msg, sizeof(msg), "Could not start the desktop");
-			break;
-		case 4:
-			kid_home();
-			break;
-		case 5:
-			dialog("Reboot to Android?", 2, "Reboot", "Cancel", NULL, android_choice);
-			break;
-		}
+		if (hit(x, y, bx, by, 290, 120))
+			menu_pick(i, t);
 	}
 }
 
@@ -1183,6 +1194,18 @@ void adult_enter(void)
 	gate_new();
 	msg[0] = 0;
 	dlg.on = 0;
+}
+
+/* Settings from RufusOS: no sum; straight to the menu, the terminal or the desktop. */
+void adult_open(int what)
+{
+	screen = MENU;
+	msg[0] = 0;
+	dlg.on = 0;
+	if (what == SETTINGS_TERMINAL)
+		menu_pick(1, now_ms());
+	else if (what == SETTINGS_DESKTOP)
+		menu_pick(3, now_ms());
 }
 
 void adult_leave(void)
@@ -1200,7 +1223,8 @@ void adult_back(void)
 		return;
 	}
 	switch (screen) {
-	case GATE: case MENU: kid_home(); break;
+	case GATE: kid_home(); break;
+	case MENU: settings_done(); break;
 	case WIFI_PASS: memset(pass, 0, sizeof(pass)); screen = WIFI; break;
 	default: screen = MENU; break;
 	}
@@ -1226,7 +1250,7 @@ void adult_touch(int ev, int x, int y, long t)
 		dialog_touch(ev, x, y);
 		return;
 	}
-	if (screen != GATE && screen != MENU && ev == EV_UP && hit(x, y, BACK_X, BACK_Y, BACK_W, BACK_H) &&
+	if (screen != GATE && ev == EV_UP && hit(x, y, BACK_X, BACK_Y, BACK_W, BACK_H) &&
 	    screen != TERM) {
 		adult_back();
 		return;

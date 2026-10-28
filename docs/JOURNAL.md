@@ -438,3 +438,55 @@ Each of these cost a debugging round:
   classic discovery and Secure Simple Pairing work as well as LE scanning. `bluetooth` is now
   in the default runlevel, named "Rufus Cuff" (`etc/bluetooth/main.conf`); the bond is stored in
   `/var/lib/bluetooth` on the rootfs.
+
+## 2026-10-28 (night): iPhone notifications (ANCS)
+
+- iOS only uses ANCS over LE, and its Settings list does not show a plain LE peripheral that
+  solicits ANCS (AsteroidOS documents the same). First pairing: the iPhone connects once with a
+  BLE app (nRF Connect), pairs over LE (numeric comparison), and "Share System Notifications"
+  is switched on in the device's page in Settings. The earlier BR/EDR bond was removed first.
+  Relaying the 6-digit code through a person is too slow for SMP's 30 s timeout.
+- `rufus-ancs` (Python, jeepney, OpenRC service `rufus-ancs`): one D-Bus loop that registers an
+  LE advertisement (soliciting ANCS, name "Rufus Cuff") and a DisplayYesNo agent, subscribes
+  to Notification Source and Data Source when the iPhone's ANCS service resolves, and asks
+  the Control Point for each notification's app, title, message, date and action labels, plus
+  each app's display name, one request at a time. Current notifications go to
+  `/run/rufus/notifications.json` (root only); new, non-silent ones buzz. Commands on the FIFO
+  `/run/rufus/ancs.ctl`: `pair` (two minutes of pairing mode: the adapter is pairable and
+  the agent accepts; otherwise both refuse), `positive UID`, `negative UID`.
+- Pitfalls: jeepney's local filter compares a match rule's sender with the unique name, so no
+  `sender='org.bluez'`; the bus always delivers NameAcquired; bluetoothd's Release/Cancel are
+  no-reply calls and a reply is refused by the bus policy; after a bluetoothd restart the
+  adapter appears a moment after the name, so registration waits for it; writing to a FIFO
+  nobody reads blocks the shell.
+- Results: iOS replays Notification Centre on subscription (42 notifications, display names
+  for each app), new ones arrive live, the iPhone reconnects by itself after a bluetoothd
+  restart with no app open, and a negative action ("Clear") from the watch removed a test
+  message on the iPhone, which answered with a removed event.
+- ANCS cannot send replies: only the positive/negative action per notification (answer or
+  decline a call, clear). Typed replies on Apple Watch use Apple's private protocol. Replies by
+  SMS through the watch's modem are possible once it has a SIM.
+
+## 2026-10-28 (night): RufusOS
+
+- New default UI, AsteroidOS's layout redone in our C framebuffer code (no Qt, no GPU):
+  `port/pupui/rufus.c`. Watch face (big clock, date, phone and battery, unread count); swipe up:
+  notifications (cards; detail with the phone's own action labels, Answer/Decline for calls);
+  swipe down: quick settings (brightness, Quiet, Pair iPhone with the code shown, flashlight);
+  swipe left: apps (Timer, Stopwatch, Flashlight, Kids, Settings, Terminal, Desktop). New
+  notifications wake the screen and show a banner; rufus-ancs buzzes unless Quiet is on.
+- One program, two modes: pupui.c's main loop runs RufusOS by default and the pups as Kids mode
+  (both buttons 3 s + the sum to leave, now landing in RufusOS). Grown-up mode's menu is RufusOS's
+  Settings without the sum; its "Kid mode" tile became "Start in Kids"
+  (`/var/lib/rufus/start-in-kids`). App icons and a 150 px clock font come from gen_assets.py.
+- rufus-ancs also writes `/run/rufus/notifications.txt` (0x1f-separated, ASCII: the fonts have no
+  other glyphs; curly quotes etc. mapped, the rest NFKD-stripped).
+- Crash found by the owner (open a notification, back home: frozen): `fit()` (grownup.c, now
+  shared) wrote ".." at offset 158 of a 160-byte buffer for 158-159 character strings; Ubuntu's
+  cross compiler builds with `_FORTIFY_SOURCE=3`, so the overflow aborted (SIGABRT) and
+  supervise-daemon gave up after five respawns, leaving the last frame on screen. Shown with
+  AddressSanitizer (old: 3-byte write past the end; fixed: clean for every length 0-400).
+- rufus-ancs: this controller refuses a new advertisement while the iPhone is connected; that
+  failure no longer counts as "bluetoothd gone" (it re-registered every 3 s). bluetoothd keeps a
+  registered advertisement and resumes it after a disconnection.
+- The owner tested RufusOS on the watch: works, "bit slow ... much faster than Android".

@@ -1,4 +1,4 @@
-/* pupui: what pupui.c shares with grownup.c and theme.c. */
+/* pupui: what pupui.c (main loop, Kids mode) shares with rufus.c, grownup.c and theme.c. */
 #include <stdint.h>
 
 #include "assets.h"
@@ -29,10 +29,33 @@ extern int saved_bl;		/* brightness to restore when the screen comes back on */
 enum { EV_NONE, EV_DOWN, EV_MOVE, EV_UP };
 
 /* pupui.c */
-void kid_home(void);		/* leave grown-up mode */
+extern int plugged;		/* charger connected (battery_pct() updates it) */
+int battery_pct(void);
+void kid_home(void);		/* back to the pups (gate cancelled) */
+void kids_enter(void);		/* RufusOS -> Kids mode */
+void kids_unlock(void);		/* the gate was passed: Kids mode -> RufusOS */
+void settings_done(void);	/* Settings closed: back to RufusOS */
+void settings_open(int what);	/* RufusOS -> Settings (SETTINGS_*) */
 void bye(void);			/* clean reboot, back to Android */
 
-/* grownup.c: the parents' side, behind a sum. */
+/* rufus.c: RufusOS, the main UI. */
+#define RUFUS_REDRAW 1
+#define RUFUS_WAKE 2
+void rufus_enter(void);
+void rufus_draw(long t);
+void rufus_touch(int ev, int x, int y, long t);
+void rufus_back(void);
+int rufus_tick(long t);		/* RUFUS_REDRAW | RUFUS_WAKE */
+int rufus_animating(void);
+
+/* grownup.c: Settings (Wi-Fi, terminal, status, desktop), and the sum gate out of Kids mode. */
+enum { SETTINGS_MENU, SETTINGS_TERMINAL, SETTINGS_DESKTOP };
+#define START_KIDS "/var/lib/rufus/start-in-kids"	/* boot into Kids mode when present */
+void adult_open(int what);	/* Settings without the gate */
+int hit(int x, int y, int bx, int by, int bw, int bh);
+void text_mid(const struct font *f, int cx, int y, uint32_t c, const char *s);
+const char *fit(const struct font *f, const char *s, int w);
+void button(int x, int y, int w, int h, const char *label, uint32_t bg);
 void adult_enter(void);		/* the sum gate first */
 void adult_leave(void);
 void adult_draw(void);

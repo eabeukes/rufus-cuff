@@ -144,6 +144,72 @@ def home_scene(w, h):
     return img.resize((w, h), Image.LANCZOS)
 
 
+# RufusOS app icons (AsteroidOS-style: a white pictogram on a coloured circle).
+ICONS = [
+    ("timer", (232, 93, 60)), ("stopwatch", (240, 160, 40)), ("alarm", (210, 64, 120)),
+    ("flashlight", (230, 190, 30)), ("calculator", (90, 110, 140)), ("game", (150, 90, 210)),
+    ("kids", (226, 38, 38)), ("settings", (80, 90, 105)), ("terminal", (40, 44, 52)),
+    ("desktop", (40, 130, 200)),
+]
+
+
+def icon_image(size, kind, colour):
+    S = size * SS
+    img = Image.new("RGBA", (S, S))
+    d = ImageDraw.Draw(img)
+    d.ellipse([0, 0, S - 1, S - 1], fill=colour)
+    c, r, wl = S / 2, S * 0.28, max(2, int(S * 0.05))
+    white = (255, 255, 255)
+    if kind in ("timer", "stopwatch", "alarm"):
+        d.ellipse([c - r, c - r * 0.9, c + r, c + r * 1.1], outline=white, width=wl)
+        d.line([c, c + r * 0.1, c, c - r * 0.55], fill=white, width=wl)
+        d.line([c, c + r * 0.1, c + r * 0.45, c + r * 0.3], fill=white, width=wl)
+        if kind == "stopwatch":
+            d.rectangle([c - r * 0.15, c - r * 1.35, c + r * 0.15, c - r * 0.9], fill=white)
+        elif kind == "alarm":
+            for sx in (-1, 1):
+                d.line([c + sx * r * 0.9, c - r * 1.05, c + sx * r * 0.45, c - r * 1.3], fill=white, width=wl)
+        else:
+            d.pieslice([c - r * 0.7, c - r * 0.6, c + r * 0.7, c + r * 0.8], -90, 30, fill=white)
+    elif kind == "flashlight":
+        d.polygon([(c - r * 0.7, c - r), (c + r * 0.7, c - r), (c + r * 0.3, c - r * 0.2),
+                   (c - r * 0.3, c - r * 0.2)], fill=white)
+        d.rectangle([c - r * 0.3, c - r * 0.2, c + r * 0.3, c + r * 1.1], fill=white)
+    elif kind == "calculator":
+        d.rounded_rectangle([c - r * 0.8, c - r, c + r * 0.8, c + r], radius=r * 0.15, outline=white, width=wl)
+        d.rectangle([c - r * 0.55, c - r * 0.75, c + r * 0.55, c - r * 0.35], fill=white)
+        for i in range(3):
+            for j in range(2):
+                x, y = c - r * 0.45 + i * r * 0.45, c + j * r * 0.45
+                d.ellipse([x - r * 0.12, y - r * 0.12, x + r * 0.12, y + r * 0.12], fill=white)
+    elif kind == "game":
+        for i in range(2):
+            for j in range(2):
+                x0, y0 = c - r + i * r * 1.05, c - r + j * r * 1.05
+                d.rounded_rectangle([x0, y0, x0 + r * 0.95, y0 + r * 0.95], radius=r * 0.15,
+                                    fill=white if (i + j) % 2 == 0 else (255, 255, 255, 140))
+    elif kind == "kids":  # a paw
+        d.ellipse([c - r * 0.6, c - r * 0.1, c + r * 0.6, c + r * 0.9], fill=white)
+        for (dx, dy) in ((-0.75, -0.35), (-0.3, -0.85), (0.3, -0.85), (0.75, -0.35)):
+            x, y = c + dx * r, c + dy * r
+            d.ellipse([x - r * 0.25, y - r * 0.3, x + r * 0.25, y + r * 0.3], fill=white)
+    elif kind == "settings":  # a gear
+        for i in range(8):
+            a = math.radians(i * 45)
+            x, y = c + math.cos(a) * r * 0.85, c + math.sin(a) * r * 0.85
+            d.ellipse([x - r * 0.25, y - r * 0.25, x + r * 0.25, y + r * 0.25], fill=white)
+        d.ellipse([c - r * 0.85, c - r * 0.85, c + r * 0.85, c + r * 0.85], fill=white)
+        d.ellipse([c - r * 0.35, c - r * 0.35, c + r * 0.35, c + r * 0.35], fill=colour)
+    elif kind == "terminal":
+        d.line([c - r * 0.8, c - r * 0.5, c - r * 0.2, c, c - r * 0.8, c + r * 0.5], fill=white, width=wl, joint="curve")
+        d.line([c, c + r * 0.6, c + r * 0.8, c + r * 0.6], fill=white, width=wl)
+    elif kind == "desktop":
+        d.rounded_rectangle([c - r, c - r * 0.75, c + r, c + r * 0.55], radius=r * 0.1, outline=white, width=wl)
+        d.rectangle([c - r * 0.15, c + r * 0.55, c + r * 0.15, c + r * 0.9], fill=white)
+        d.rectangle([c - r * 0.5, c + r * 0.85, c + r * 0.5, c + r], fill=white)
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def c_img(name, img):
     px = img.convert("RGBA").load()
     w, h = img.size
@@ -194,7 +260,11 @@ def main(out):
     parts.append(c_font("font_l", 72))
     parts.append(c_font("font_t", 22, FONTS + "DejaVuSans.ttf"))
     parts.append(c_font("font_mono", 20, FONTS + "DejaVuSansMono.ttf"))
-    header.append("extern const struct font font_s, font_m, font_l, font_t, font_mono;\n"
+    parts.append(c_font("font_xl", 150, FONTS + "DejaVuSans.ttf"))  # RufusOS clock
+    for kind, colour in ICONS:
+        parts.append(c_img(f"icon_{kind}", icon_image(104, kind, colour)))
+    header.append("extern const struct image " + ", ".join(f"icon_{k}" for k, _ in ICONS) + ";\n")
+    header.append("extern const struct font font_s, font_m, font_l, font_t, font_mono, font_xl;\n"
                   "/* Pointers, so a theme (theme.c) can replace them. */\n"
                   "extern const struct image *home_img, *pups[6], *pups_small[6], *badges[6];\n"
                   "extern const char *pup_names[6];\nextern const uint32_t pup_team[6];\n")
@@ -215,6 +285,10 @@ def main(out):
         ImageDraw.Draw(sheet).text((i * 160 + 40, 290), name, font=ImageFont.truetype(FONT, 26), fill=(0, 0, 0))
     sheet.save(out.rsplit("/", 1)[0] + "/preview-pups.png")
     home_scene(640, 480).save(out.rsplit("/", 1)[0] + "/preview-home.png")
+    icons = Image.new("RGBA", (len(ICONS) * 112, 112), (20, 22, 28, 255))
+    for i, (kind, colour) in enumerate(ICONS):
+        icons.alpha_composite(icon_image(104, kind, colour), (i * 112 + 4, 4))
+    icons.save(out.rsplit("/", 1)[0] + "/preview-icons.png")
 
 
 if __name__ == "__main__":

@@ -59,12 +59,12 @@ arm-linux-gnueabihf-gcc -static -O2 -Wall -o "$OUT/mapfile-android" "$REPO/port/
 chmod 755 "$root/bin/disptool" "$root/bin/evtest"
 # Kid UI and grown-up mode. Its art is generated at build time (assets.c is ~7 MB and not checked in).
 mkdir -p "$HOME/port/pupui"
-for f in pupui.c grownup.c theme.c ui.h; do
+for f in pupui.c grownup.c rufus.c theme.c ui.h; do
 	sed 's/\r$//' "$REPO/port/pupui/$f" > "$HOME/port/pupui/$f"
 done
 python3 "$REPO/port/pupui/gen_assets.py" "$HOME/port/pupui/assets" > /dev/null
 (cd "$HOME/port/pupui" &&
-	aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/pupui" pupui.c grownup.c theme.c assets.c -lm)
+	aarch64-linux-gnu-gcc -static -O2 -Wall -o "$root/bin/pupui" pupui.c grownup.c rufus.c theme.c assets.c -lm)
 # Wi-Fi firmware, Wi-Fi and BT NVRAM (from the watch itself; port/firmware/README.txt).
 mkdir -p "$root/lib/firmware"
 cp "$REPO"/port/firmware/ROMv2_lm_patch_1_*_hdr.bin "$REPO/port/firmware/WIFI_RAM_CODE_6755" 	"$REPO/port/firmware/mt6739-wlan-nvram.bin" "$REPO/port/firmware/mt6739-bt-nvram.bin" "$root/lib/firmware/"
