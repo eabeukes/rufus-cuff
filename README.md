@@ -64,7 +64,8 @@ it. Without an installed rootfs, Linux runs from its initramfs and returns to An
 **RufusOS** (layout borrowed from AsteroidOS): the watch face; swipe up for notifications (tap
 one for the text and the phone's own buttons, e.g. Clear, or Answer/Decline for calls), swipe
 down for quick settings (brightness, Quiet, Pair iPhone, flashlight), swipe left for apps
-(Timer, Stopwatch, Flashlight, Kids, Settings, Terminal, Desktop). Upper button: back; lower:
+(Timer, Stopwatch, Alarm, Flashlight, Calculator, Music, 2048, Kids, Settings, Terminal,
+Desktop). Upper button: back; lower:
 screen off. New notifications wake the screen, buzz and show a banner.
 **Kids mode** is the pups; leaving it takes both buttons held 3 s and a sum.
 **Settings**: Wi-Fi (scan, password keyboard, forget), terminal, status, Desktop (Sxmo on
@@ -77,7 +78,9 @@ NetworkManager or ModemManager).
 iPhone opens pairing for two minutes. On the iPhone, connect once to "Rufus Cuff" with a BLE app
 (nRF Connect), tap Pair when the watch shows the same code, then switch on Share System
 Notifications in the iPhone's Bluetooth settings for Rufus Cuff. After that it reconnects by
-itself. Replies are not possible over ANCS (only clear, answer and decline).
+itself. Replies are not possible over ANCS (only clear, answer and decline). The same link
+gives the Music app (what the iPhone plays, play/pause, skip, volume: Apple's AMS) and sets the
+watch's clock from the iPhone (CTS).
 
 ![RufusOS watch face](docs/img/rufus-face.png) ![RufusOS apps](docs/img/rufus-apps.png)
 

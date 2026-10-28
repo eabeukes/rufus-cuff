@@ -527,3 +527,36 @@ Each of these cost a debugging round:
   it with SMP "pairing not supported" (0x05), because pairing is only open from Quick settings >
   Pair iPhone. Re-paired that way; notifications work again. The refusal happens in the kernel
   (not bondable), so rufus-ancs is not asked and cannot show a hint yet.
+
+## 2026-10-28 (night): battery, iPhone music and time
+
+- Measuring: the gauge's `current_now` is the only usable figure (`charge_now` stays at the
+  design value). Unplugging cuts the serial link, so the battery is measured on USB with charging
+  held off: new test switch `mt6357_charger.inhibit` (sysfs, 0644), always cleared by the test
+  scripts' traps. Screen off, 3 min per phase, 18 samples each (raw readings, before the
+  calibration fix below):
+  | phase | mA |
+  |---|---|
+  | baseline (Wi-Fi power save off) | 293 |
+  | Wi-Fi power save on | 232 |
+  | Wi-Fi off | 224 |
+  | + Bluetooth off | 225 |
+  | + modem service (ccci-fsd) stopped | 222 |
+  | modem never started (reboot without rufus-modem), Wi-Fi power save on | 205 |
+  | display engine RDMA0 paused (power save off) | 283 vs 286-290 |
+  Wi-Fi power save is now on by default (rufus-wifi): -60 mA, still connected. The modem costs
+  ~27 mA with the radio off and no SIM. Bluetooth and the display engine are noise. The CPUs sit
+  94-99 % in cluster-off; the remaining ~200 mA is the SoC not reaching its own low-power states
+  (no SPM firmware, DVFSRC unconfigured), the big remaining item.
+- Gauge calibration: AGM's driver scaled FG_CURRENT with 305176 nA/LSB x 0.930 (the AGM M7's
+  CAR_TUNE). The vendor's mt6357_gauge.c uses UNIT_FGCURRENT 314331 and UNIT_FGCAR 11176, and
+  this watch's stock DT has CAR_TUNE_VALUE 77 (x10 = 770 permille) with R_FG_VALUE 10 mOhm.
+  With those, readings are ~15 % lower: the driver logged -195 mA with power save and the modem.
+  The battery reports 2729 mAh design capacity (the TICWRIS MAX is sold as 2880 mAh).
+- AMS (Apple Media Service) and CTS (Current Time Service) in rufus-ancs: player state and track
+  to `/run/rufus/media.txt`, remote commands on the FIFO (`media toggle|next|prev|...`), and the
+  clock from the iPhone (UTC from its Local Time Information, set when > 2 s off, RTC offset
+  saved). Decoding tested off the watch with the D-Bus layer stubbed; on the watch AMS was found
+  and subscribed before the iPhone went out of range, so the live path is untested.
+- RufusOS Music app (track, artist, album, progress moving on while playing, previous / play-pause
+  / next, volume); the app grid is three rows of 84 px icons for 11 apps.

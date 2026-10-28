@@ -40,7 +40,8 @@
 #define F_POSITIVE 8
 #define F_NEGATIVE 16
 
-enum view { FACE, NOTES, NOTE, QUICK, APPS, PAIR, TIMER, STOPWATCH, FLASH, ALARM, ALARM_RING, CALC, GAME };
+enum view { FACE, NOTES, NOTE, QUICK, APPS, PAIR, TIMER, STOPWATCH, FLASH, ALARM, ALARM_RING, CALC, GAME,
+	     MUSIC };
 static enum view view = FACE;
 
 /* ---------------------------------------------------------------- notifications */
@@ -406,7 +407,8 @@ struct app { const char *name; const struct image *icon; int view; };
 static const struct app apps[] = {
 	{ "Timer", &icon_timer, TIMER }, { "Stopwatch", &icon_stopwatch, STOPWATCH },
 	{ "Alarm", &icon_alarm, ALARM }, { "Flashlight", &icon_flashlight, FLASH },
-	{ "Calculator", &icon_calculator, CALC }, { "2048", &icon_game, GAME },
+	{ "Calculator", &icon_calculator, CALC }, { "Music", &icon_music, MUSIC },
+	{ "2048", &icon_game, GAME },
 	{ "Kids", &icon_kids, A_KIDS }, { "Settings", &icon_settings, A_SETTINGS },
 	{ "Terminal", &icon_terminal, A_TERMINAL }, { "Desktop", &icon_desktop, A_DESKTOP },
 };
@@ -414,8 +416,8 @@ static const struct app apps[] = {
 
 static void app_pos(int i, int *x, int *y)
 {
-	*x = 4 + (i % 5) * 126;		/* a 126 x 200 cell per app */
-	*y = 40 + (i / 5) * 210;
+	*x = 4 + (i % 5) * 126;		/* a 126 x 156 cell per app, three rows */
+	*y = 8 + (i / 5) * 158;
 }
 
 static void draw_apps(void)
@@ -424,8 +426,8 @@ static void draw_apps(void)
 	for (int i = 0; i < APP_N; i++) {
 		int x, y;
 		app_pos(i, &x, &y);
-		blit(apps[i].icon, x + 11, y);
-		text_mid(&font_t, x + 63, y + 114, C_TEXT, apps[i].name);
+		blit(apps[i].icon, x + 63 - apps[i].icon->w / 2, y);
+		text_mid(&font_t, x + 63, y + apps[i].icon->h + 6, C_TEXT, apps[i].name);
 	}
 }
 
@@ -653,6 +655,107 @@ void rufus_alarm_input(void)
 {
 	if (al_ringing)
 		alarm_stop(0, 0);
+}
+
+/* ---------------------------------------------------------------- music (the iPhone's, over AMS) */
+
+#define MEDIA_TXT "/run/rufus/media.txt"
+
+static struct {
+	int connected, playing;
+	double elapsed, rate, duration, volume;
+	long read_ms;		/* when elapsed was read: playing tracks move on from there */
+	char title[160], artist[160], album[160], player[64];
+} media;
+
+/* MEDIA_TXT from rufus-ancs: "connected 0|1", then "field<TAB>value" lines. */
+static void media_load(long t)
+{
+	FILE *f = fopen(MEDIA_TXT, "r");
+	char line[400];
+
+	memset(&media, 0, sizeof(media));
+	media.read_ms = t;
+	if (!f)
+		return;
+	while (fgets(line, sizeof(line), f)) {
+		char *v = strchr(line, '\t');
+		line[strcspn(line, "\n")] = 0;
+		if (!strncmp(line, "connected ", 10)) {
+			media.connected = atoi(line + 10);
+			continue;
+		}
+		if (!v)
+			continue;
+		*v++ = 0;
+		if (!strcmp(line, "title"))
+			snprintf(media.title, sizeof(media.title), "%s", v);
+		else if (!strcmp(line, "artist"))
+			snprintf(media.artist, sizeof(media.artist), "%s", v);
+		else if (!strcmp(line, "album"))
+			snprintf(media.album, sizeof(media.album), "%s", v);
+		else if (!strcmp(line, "player"))
+			snprintf(media.player, sizeof(media.player), "%s", v);
+		else if (!strcmp(line, "duration"))
+			media.duration = atof(v);
+		else if (!strcmp(line, "volume"))
+			media.volume = atof(v);
+		else if (!strcmp(line, "playback"))	/* "state,rate,elapsed" */
+			if (sscanf(v, "%d,%lf,%lf", &media.playing, &media.rate, &media.elapsed) >= 1)
+				media.playing = media.playing == 1;
+	}
+	fclose(f);
+}
+
+#define MB_Y 330	/* the transport buttons */
+
+static void draw_music(long t)
+{
+	char s[48], d[24];
+
+	fill_rect(0, 0, W, H, C_BG);
+	if (!media.connected) {
+		text_mid(&font_s, W / 2, 170, C_DIM, "No iPhone connected");
+		text_mid(&font_t, W / 2, 216, C_DIM, "Music on the iPhone shows up here.");
+		return;
+	}
+	text(&font_t, 20, 14, C_DIM, fit(&font_t, media.player[0] ? media.player : "iPhone", W - 40));
+	int y = wrap(&font_m, 20, 46, W - 40, 150, C_TEXT, media.title[0] ? media.title : "Nothing playing");
+	text(&font_s, 20, y + 6, C_DIM, fit(&font_s, media.artist, W - 40));
+	text(&font_t, 20, y + 42, C_DIM, fit(&font_t, media.album, W - 40));
+
+	/* progress: elapsed moves on from the last report while playing */
+	double el = media.elapsed + (media.playing ? (t - media.read_ms) / 1000.0 * media.rate : 0);
+	if (media.duration > 0) {
+		if (el > media.duration)
+			el = media.duration;
+		fill_rrect(20, 286, W - 40, 10, 5, C_CARD2);
+		fill_rrect(20, 286, (int)((W - 40) * el / media.duration), 10, 5, C_ACCENT);
+		mmss(s, sizeof(s), (long)(el * 1000), 0);
+		mmss(d, sizeof(d), (long)(media.duration * 1000), 0);
+		text(&font_t, 20, 300, C_DIM, s);
+		text(&font_t, W - 20 - text_width(&font_t, d), 300, C_DIM, d);
+	}
+	button(20, MB_Y, 140, 90, "|<<", C_CARD2);
+	button(170, MB_Y, 140, 90, media.playing ? "||" : ">", C_ACCENT);
+	button(320, MB_Y, 140, 90, ">>|", C_CARD2);
+	button(480, MB_Y, 66, 90, "-", C_CARD2);
+	button(554, MB_Y, 66, 90, "+", C_CARD2);
+	if (media.volume > 0) {
+		snprintf(s, sizeof(s), "volume %d %%", (int)(media.volume * 100 + 0.5));
+		text_mid(&font_t, 550, MB_Y + 100, C_DIM, s);
+	}
+}
+
+static void music_touch(int x, int y)
+{
+	static const struct { int x, w; const char *cmd; } b[] = {
+		{ 20, 140, "media prev\n" }, { 170, 140, "media toggle\n" }, { 320, 140, "media next\n" },
+		{ 480, 66, "media voldown\n" }, { 554, 66, "media volup\n" },
+	};
+	for (size_t i = 0; i < sizeof(b) / sizeof(b[0]); i++)
+		if (hit(x, y, b[i].x, MB_Y, b[i].w, 90))
+			ctl(b[i].cmd);
 }
 
 /* ---------------------------------------------------------------- calculator */
@@ -918,6 +1021,8 @@ static void go(enum view v)
 	}
 	if (v == GAME && !g_started)
 		g_new();
+	if (v == MUSIC)
+		media_load(now_ms());
 	view = v;
 }
 
@@ -932,7 +1037,7 @@ void rufus_back(void)
 	case NOTE: go(NOTES); break;
 	case FLASH: go(QUICK); break;
 	case PAIR: go(QUICK); break;
-	case TIMER: case STOPWATCH: case ALARM: case CALC: case GAME: go(APPS); break;
+	case TIMER: case STOPWATCH: case ALARM: case CALC: case GAME: case MUSIC: go(APPS); break;
 	case ALARM_RING: alarm_stop(0, 0); go(FACE); break;
 	default: go(FACE); break;
 	}
@@ -1060,7 +1165,7 @@ void rufus_touch(int ev, int x, int y, long t)
 		for (int i = 0; i < APP_N && !swipe; i++) {
 			int ax, ay;
 			app_pos(i, &ax, &ay);
-			if (hit(x, y, ax, ay, 120, 150))
+			if (hit(x, y, ax, ay, 126, 150))
 				open_app(i);
 		}
 		break;
@@ -1091,6 +1196,10 @@ void rufus_touch(int ev, int x, int y, long t)
 		if (!swipe)
 			calc_touch(x, y);
 		break;
+	case MUSIC:
+		if (!swipe)
+			music_touch(x, y);
+		break;
 	case GAME:
 		if (swipe)
 			g_swipe(horiz ? (dx < 0 ? 0 : 1) : (dy < 0 ? 2 : 3));
@@ -1116,6 +1225,7 @@ void rufus_draw(long t)
 	case ALARM_RING: draw_alarm_ring(); break;
 	case CALC: draw_calc(); break;
 	case GAME: draw_game(); break;
+	case MUSIC: draw_music(t); break;
 	}
 	draw_banner(t);
 }
@@ -1139,7 +1249,8 @@ void rufus_bench(void)
 /* Redraw often while something moves (timer, stopwatch, pairing countdown). */
 int rufus_animating(void)
 {
-	return (view == TIMER && timer_run) || (view == STOPWATCH && sw_run) || view == PAIR;
+	return (view == TIMER && timer_run) || (view == STOPWATCH && sw_run) || view == PAIR ||
+	       (view == MUSIC && media.playing);
 }
 
 /*
@@ -1170,6 +1281,17 @@ int rufus_tick(long t, int kids)
 	}
 	if (kids)
 		return r;
+
+	/* Music: reread MEDIA_TXT when rufus-ancs rewrites it (an unchanged file would reset
+	 * the progress estimate). */
+	static struct stat media_st;
+	if (view == MUSIC && stat(MEDIA_TXT, &st) == 0 &&
+	    (st.st_ino != media_st.st_ino || st.st_mtim.tv_nsec != media_st.st_mtim.tv_nsec ||
+	     st.st_mtim.tv_sec != media_st.st_mtim.tv_sec)) {
+		media_st = st;
+		media_load(t);
+		r |= RUFUS_REDRAW;
+	}
 
 	if (t - last_check >= 500) {
 		last_check = t;

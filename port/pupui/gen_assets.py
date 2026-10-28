@@ -149,8 +149,9 @@ ICONS = [
     ("timer", (232, 93, 60)), ("stopwatch", (240, 160, 40)), ("alarm", (210, 64, 120)),
     ("flashlight", (230, 190, 30)), ("calculator", (90, 110, 140)), ("game", (150, 90, 210)),
     ("kids", (226, 38, 38)), ("settings", (80, 90, 105)), ("terminal", (40, 44, 52)),
-    ("desktop", (40, 130, 200)),
+    ("desktop", (40, 130, 200)), ("music", (230, 70, 90)),
 ]
+ICON_SIZE = 84
 
 
 def icon_image(size, kind, colour):
@@ -203,6 +204,12 @@ def icon_image(size, kind, colour):
     elif kind == "terminal":
         d.line([c - r * 0.8, c - r * 0.5, c - r * 0.2, c, c - r * 0.8, c + r * 0.5], fill=white, width=wl, joint="curve")
         d.line([c, c + r * 0.6, c + r * 0.8, c + r * 0.6], fill=white, width=wl)
+    elif kind == "music":  # two joined notes
+        for x in (c - r * 0.75, c + r * 0.45):
+            d.ellipse([x - r * 0.32, c + r * 0.45, x + r * 0.32, c + r * 0.95], fill=white)
+            d.rectangle([x + r * 0.2, c - r * 0.75, x + r * 0.32, c + r * 0.7], fill=white)
+        d.polygon([(c - r * 0.55 + r * 0.0, c - r * 0.75), (c + r * 0.77, c - r * 1.0),
+                   (c + r * 0.77, c - r * 0.7), (c - r * 0.55, c - r * 0.45)], fill=white)
     elif kind == "desktop":
         d.rounded_rectangle([c - r, c - r * 0.75, c + r, c + r * 0.55], radius=r * 0.1, outline=white, width=wl)
         d.rectangle([c - r * 0.15, c + r * 0.55, c + r * 0.15, c + r * 0.9], fill=white)
@@ -262,7 +269,7 @@ def main(out):
     parts.append(c_font("font_mono", 20, FONTS + "DejaVuSansMono.ttf"))
     parts.append(c_font("font_xl", 150, FONTS + "DejaVuSans.ttf"))  # RufusOS clock
     for kind, colour in ICONS:
-        parts.append(c_img(f"icon_{kind}", icon_image(104, kind, colour)))
+        parts.append(c_img(f"icon_{kind}", icon_image(ICON_SIZE, kind, colour)))
     header.append("extern const struct image " + ", ".join(f"icon_{k}" for k, _ in ICONS) + ";\n")
     header.append("extern const struct font font_s, font_m, font_l, font_t, font_mono, font_xl;\n"
                   "/* Pointers, so a theme (theme.c) can replace them. */\n"
@@ -285,9 +292,9 @@ def main(out):
         ImageDraw.Draw(sheet).text((i * 160 + 40, 290), name, font=ImageFont.truetype(FONT, 26), fill=(0, 0, 0))
     sheet.save(out.rsplit("/", 1)[0] + "/preview-pups.png")
     home_scene(640, 480).save(out.rsplit("/", 1)[0] + "/preview-home.png")
-    icons = Image.new("RGBA", (len(ICONS) * 112, 112), (20, 22, 28, 255))
+    icons = Image.new("RGBA", (len(ICONS) * (ICON_SIZE + 8), ICON_SIZE + 8), (20, 22, 28, 255))
     for i, (kind, colour) in enumerate(ICONS):
-        icons.alpha_composite(icon_image(104, kind, colour), (i * 112 + 4, 4))
+        icons.alpha_composite(icon_image(ICON_SIZE, kind, colour), (i * (ICON_SIZE + 8) + 4, 4))
     icons.save(out.rsplit("/", 1)[0] + "/preview-icons.png")
 
 
