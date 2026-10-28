@@ -74,12 +74,17 @@ static const u32 cv_vth_uv[] = {
 #define FGADC_CON1_SW_CLEAR		8
 #define FGADC_CON1_LATCHDATA_ST		BIT(15)
 
+/*
+ * Gauge scaling as the vendor's mt6357_gauge.c (UNIT_FGCURRENT, UNIT_FGCAR) with this watch's
+ * stock bat_gm30 node: R_FG_VALUE 10 mOhm, CAR_TUNE_VALUE 77 (x10 in the vendor driver).
+ * AGM's values (305176, 10850, 930 from the AGM M7) read this watch's currents ~17% high.
+ */
 /* nA per FG_CURRENT LSB with a 10 mOhm sense resistor. */
-#define FG_CURRENT_UNIT_NA		305176
-/* Stock CAR_TUNE_VALUE. */
-#define FG_CAR_TUNE_PERMILLE		930
-/* Coulomb counter: 10.85 uAh per 2^11 LSB with a 10 mOhm sense resistor. */
-#define FG_CAR_UNIT_NAH			10850
+#define FG_CURRENT_UNIT_NA		314331
+/* CAR_TUNE_VALUE: the board's calibration of the sense resistor. */
+#define FG_CAR_TUNE_PERMILLE		770
+/* Coulomb counter: 11.176 uAh per 2^11 LSB with a 10 mOhm sense resistor. */
+#define FG_CAR_UNIT_NAH			11176
 #define FG_CAR_SHIFT			11
 /* Battery and sense resistance, to estimate OCV under load. */
 #define BAT_R_MOHM			150
@@ -317,6 +322,10 @@ static void mt6357_charge_disable(struct mt6357_charger *chg)
 static bool kick_wdt = true;
 module_param(kick_wdt, bool, 0644);
 
+/* Test knob: inhibit=1 keeps charging off, so the battery runs the watch on USB (power tests). */
+static bool inhibit;
+module_param(inhibit, bool, 0644);
+
 /*
  * Called every poll. The charger watchdog (32 s) is kicked here, so charging stops by
  * itself if this stops running. Charges only with a charger, a battery temperature
@@ -360,7 +369,8 @@ static void mt6357_charge_update(struct mt6357_charger *chg, bool vbat_ok)
 			chg->full = false;
 	}
 
-	want = chg->online && vbat_ok && temp_ok && !chg->full && !chg->fault && !chg->timed_out;
+	want = chg->online && vbat_ok && temp_ok && !chg->full && !chg->fault && !chg->timed_out &&
+	       !inhibit;
 	if (want != chg->charging)
 		dev_info(chg->dev, "charging %s (%d mV, %d mA, %d.%d C%s)\n",
 			 want ? "on" : "off", chg->vbat_uv / 1000, chg->current_ua / 1000,
