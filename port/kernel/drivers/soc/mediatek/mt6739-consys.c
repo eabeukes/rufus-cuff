@@ -55,6 +55,8 @@
 #define BTIF_TRI_LVL		0x60
 #define BTIF_TRI_LVL_TX		GENMASK(3, 0)
 #define BTIF_TRI_LVL_RX		GENMASK(6, 4)
+#define BTIF_WAK		0x64	/* ap_wakeup_consys, active low */
+#define BTIF_WAK_BIT		BIT(0)
 #define BTIF_HANDSHAKE		0x6c
 #define BTIF_HANDSHAKE_EN	BIT(0)
 
@@ -96,6 +98,7 @@ struct mt6739_consys {
 	struct mutex tx_lock;		/* one STP packet or ack on BTIF at a time */
 	struct mutex lock;
 	unsigned int users;
+	bool asleep;			/* WMT sleep sent for system suspend */
 	bool debugfs_on;
 	/* Bluetooth: while open, bt_task owns rxbuf and hands type 0 payloads to bt_recv. */
 	struct task_struct *bt_task;
@@ -371,19 +374,35 @@ static int mt6739_consys_stp_pop(struct mt6739_consys *cs, unsigned int *type, u
 	}
 }
 
-/* Returns the payload length of the next WMT packet, copied to cs->evt. */
+/*
+ * Returns the payload length of the next WMT packet, copied to cs->evt. While Bluetooth is
+ * open (its thread parked for a suspend), Bluetooth packets that come meanwhile go to it.
+ */
 static int mt6739_consys_wmt_recv(struct mt6739_consys *cs, unsigned int timeout_ms)
 {
 	unsigned long deadline = jiffies + msecs_to_jiffies(timeout_ms);
+	bool bt = cs->bt_task;
 	unsigned int type;
 	bool fresh;
 	long left;
 	int ret;
 
 	for (;;) {
-		ret = mt6739_consys_stp_pop(cs, &type, cs->evt, sizeof(cs->evt), &fresh);
-		if (ret >= 0 && fresh && type == STP_TYPE_WMT)
+		if (bt)
+			ret = mt6739_consys_stp_pop(cs, &type, cs->bt_pkt, sizeof(cs->bt_pkt), &fresh);
+		else
+			ret = mt6739_consys_stp_pop(cs, &type, cs->evt, sizeof(cs->evt), &fresh);
+		if (ret >= 0 && fresh && type == STP_TYPE_BT && bt) {
+			cs->bt_recv(cs->bt_priv, cs->bt_pkt, ret);
+			continue;
+		}
+		if (ret >= 0 && fresh && type == STP_TYPE_WMT) {
+			if (bt) {
+				ret = min_t(int, ret, sizeof(cs->evt));
+				memcpy(cs->evt, cs->bt_pkt, ret);
+			}
 			return ret;
+		}
 		if (ret >= 0) {
 			dev_dbg(cs->dev, "STP type %u: %*ph\n", type, min(ret, 32), cs->evt);
 			continue;
@@ -700,8 +719,10 @@ static int mt6739_consys_bt_thread(void *data)
 	int ret;
 
 	while (!kthread_should_stop()) {
+		if (kthread_should_park())
+			kthread_parkme();
 		wait_event_interruptible_timeout(cs->rx_wait, !kfifo_is_empty(&cs->rx) ||
-						 kthread_should_stop(), HZ);
+						 kthread_should_stop() || kthread_should_park(), HZ);
 		cs->rxlen += kfifo_out(&cs->rx, cs->rxbuf + cs->rxlen, sizeof(cs->rxbuf) - cs->rxlen);
 		while ((ret = mt6739_consys_stp_pop(cs, &type, cs->bt_pkt, sizeof(cs->bt_pkt),
 						    &fresh)) >= 0) {
@@ -861,34 +882,78 @@ static void mt6739_consys_remove(struct platform_device *pdev)
 		mt6739_consys_power_off(cs);
 }
 
+static const u8 wmt_sleep[] = { 0x01, 0x03, 0x01, 0x00, 0x01 };
+static const u8 wmt_sleep_evt[] = { 0x02, 0x03, 0x02, 0x00, 0x00, 0x01 };
+static const u8 wmt_wakeup_evt[] = { 0x02, 0x03, 0x02, 0x00, 0x00, 0x03 };
+
+/* As the vendor's hal_btif_raise_wak_sig(): low for longer than a 32 kHz period. */
+static void mt6739_consys_btif_wakeup(struct mt6739_consys *cs)
+{
+	writel(0, cs->btif + BTIF_WAK);
+	usleep_range(128, 160);
+	writel(BTIF_WAK_BIT, cs->btif + BTIF_WAK);
+}
+
 /*
  * genpd powers the conn domain off in system suspend unless a device in it is on the wakeup
  * path, and that loses the chip's firmware. Keep it up while anyone uses it: Bluetooth is
  * what wakes the watch, through the BTIF interrupt.
+ *
+ * An awake CONSYS holds the SPM's CONN2AP wake source, which ends a suspend at once
+ * (measured), so it is put to sleep with the vendor's STP-PSM commands: WMT sleep here, and
+ * BTIF_WAK to wake it on resume. The Bluetooth thread is parked meanwhile: the WMT exchange
+ * reads the same receive buffer.
  */
 static int mt6739_consys_suspend(struct device *dev)
 {
 	struct mt6739_consys *cs = dev_get_drvdata(dev);
+	int ret = 0;
 
 	mutex_lock(&cs->lock);
 	if (cs->users) {
+		if (cs->bt_task)
+			kthread_park(cs->bt_task);
+		ret = WMT_CMD(cs, "sleep", wmt_sleep, wmt_sleep_evt);
+		if (ret) {
+			if (cs->bt_task)
+				kthread_unpark(cs->bt_task);
+			goto out;
+		}
+		cs->asleep = true;
 		device_set_wakeup_path(dev);
 		if (device_may_wakeup(dev))
 			cs->irq_wake = !enable_irq_wake(cs->irq);
 	}
+out:
 	mutex_unlock(&cs->lock);
-	return 0;
+	return ret;
 }
 
 static int mt6739_consys_resume(struct device *dev)
 {
 	struct mt6739_consys *cs = dev_get_drvdata(dev);
+	int ret = 0;
 
 	if (cs->irq_wake) {
 		disable_irq_wake(cs->irq);
 		cs->irq_wake = false;
 	}
-	return 0;
+	mutex_lock(&cs->lock);
+	if (cs->asleep) {
+		mt6739_consys_btif_wakeup(cs);
+		ret = mt6739_consys_wmt_recv(cs, WMT_TIMEOUT_MS);
+		if (ret >= 0 && (ret != sizeof(wmt_wakeup_evt) ||
+				 memcmp(cs->evt, wmt_wakeup_evt, ret)))
+			dev_err(cs->dev, "WMT wakeup: unexpected reply %*ph\n", min(ret, 32), cs->evt);
+		else if (ret < 0)
+			dev_err(cs->dev, "WMT wakeup: %d\n", ret);
+		ret = 0;
+		cs->asleep = false;
+		if (cs->bt_task)
+			kthread_unpark(cs->bt_task);
+	}
+	mutex_unlock(&cs->lock);
+	return ret;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(mt6739_consys_pm, mt6739_consys_suspend, mt6739_consys_resume);
