@@ -903,6 +903,11 @@ static void mt6739_consys_btif_wakeup(struct mt6739_consys *cs)
  * (measured), so it is put to sleep with the vendor's STP-PSM commands: WMT sleep here, and
  * BTIF_WAK to wake it on resume. The Bluetooth thread is parked meanwhile: the WMT exchange
  * reads the same receive buffer.
+ *
+ * These are the late/early callbacks: the Wi-Fi driver talks to its firmware in its wiphy
+ * suspend and resume (disconnect, scan abort), which have no ordering against this device;
+ * Wi-Fi commands on resume while CONSYS still slept hung the watch (measured). The phases
+ * are global barriers.
  */
 static int mt6739_consys_suspend(struct device *dev)
 {
@@ -956,7 +961,9 @@ static int mt6739_consys_resume(struct device *dev)
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(mt6739_consys_pm, mt6739_consys_suspend, mt6739_consys_resume);
+static const struct dev_pm_ops mt6739_consys_pm = {
+	LATE_SYSTEM_SLEEP_PM_OPS(mt6739_consys_suspend, mt6739_consys_resume)
+};
 
 static int mt6739_consys_probe(struct platform_device *pdev)
 {
