@@ -20,6 +20,7 @@
 #include <linux/of.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeup.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -80,6 +81,8 @@ struct mt6739_consys {
 	phys_addr_t emi_base;
 	void __iomem *btif;
 	struct clk *btif_clk;
+	int irq;
+	bool irq_wake;
 	DECLARE_KFIFO(rx, u8, 4096);
 	spinlock_t rx_lock;
 	wait_queue_head_t rx_wait;
@@ -858,6 +861,38 @@ static void mt6739_consys_remove(struct platform_device *pdev)
 		mt6739_consys_power_off(cs);
 }
 
+/*
+ * genpd powers the conn domain off in system suspend unless a device in it is on the wakeup
+ * path, and that loses the chip's firmware. Keep it up while anyone uses it: Bluetooth is
+ * what wakes the watch, through the BTIF interrupt.
+ */
+static int mt6739_consys_suspend(struct device *dev)
+{
+	struct mt6739_consys *cs = dev_get_drvdata(dev);
+
+	mutex_lock(&cs->lock);
+	if (cs->users) {
+		device_set_wakeup_path(dev);
+		if (device_may_wakeup(dev))
+			cs->irq_wake = !enable_irq_wake(cs->irq);
+	}
+	mutex_unlock(&cs->lock);
+	return 0;
+}
+
+static int mt6739_consys_resume(struct device *dev)
+{
+	struct mt6739_consys *cs = dev_get_drvdata(dev);
+
+	if (cs->irq_wake) {
+		disable_irq_wake(cs->irq);
+		cs->irq_wake = false;
+	}
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(mt6739_consys_pm, mt6739_consys_suspend, mt6739_consys_resume);
+
 static int mt6739_consys_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -888,6 +923,10 @@ static int mt6739_consys_probe(struct platform_device *pdev)
 	if (irq < 0)
 		return irq;
 	ret = devm_request_irq(dev, irq, mt6739_consys_btif_irq, 0, "mt6739-btif", cs);
+	if (ret)
+		return ret;
+	cs->irq = irq;
+	ret = devm_device_init_wakeup(dev);
 	if (ret)
 		return ret;
 
@@ -956,6 +995,7 @@ static struct platform_driver mt6739_consys_driver = {
 	.driver = {
 		.name = "mt6739-consys",
 		.suppress_bind_attrs = true,	/* Wi-Fi and BT hold it */
+		.pm = pm_sleep_ptr(&mt6739_consys_pm),
 		.of_match_table = mt6739_consys_of_match,
 	},
 };
