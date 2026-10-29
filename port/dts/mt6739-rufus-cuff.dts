@@ -198,13 +198,16 @@
 		 * headers in RAM: 79 dump records (0x4f000), console (0x40000 at 0x5445f000,
 		 * shown as console-ramoops), a second console (0x40000 at 0x5449f000,
 		 * console-ramoops-2), ftrace (0x1000), pmsg (0x10000). Same layout as the AGM M7.
-		 * Mainline ramoops gets the dump records only; the console zone belongs to
-		 * earlycon=pstoreram, so the stock kernel shows our log as console-ramoops.
+		 * Mainline ramoops gets the dump records' range: 15 records and its own console
+		 * (the whole kernel log, kept across a watchdog reset as console-ramoops-0); the
+		 * stock console zone belongs to earlycon=pstoreram, so the stock kernel shows our
+		 * early log as console-ramoops.
 		 */
 		ramoops@54410000 {
 			compatible = "ramoops";
 			reg = <0 0x54410000 0 0x4f000>;
 			record-size = <0x1000>;
+			console-size = <0x40000>;
 		};
 
 		console-ramoops@5445f000 {
