@@ -37,6 +37,8 @@
 #define MTK_SIP_SPM_ARGS		0xc2000228
 #define SPM_ARGS_SUSPEND		2
 #define SPM_ARGS_SUSPEND_FINISH		3
+#define SPM_ARGS_PCM_WDT		8
+#define PCM_WDT_TIMEOUT_S		30
 #define PCM_FLAG_DIS_CPU_PDN		BIT(0)
 #define MT6739_PSCI_SUSPEND		0x01010005
 #define SPM_TIMER_HZ			32768
@@ -93,6 +95,12 @@ static int mt6739_sleep_enter(suspend_state_t state)
 	int n, ret = 0;
 	u64 t0, t1;
 
+	/*
+	 * The SPM's PCM watchdog resets the watch (TOPRGU has the SPM request in reset mode) if
+	 * its firmware hangs. The ATF arms it in the suspend path; left armed it fires about 30 s
+	 * after the resume (measured), so it is disarmed after, as the vendor's spm_go_to_sleep().
+	 */
+	arm_smccc_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, PCM_WDT_TIMEOUT_S, 0, 0, 0, 0, &res);
 	arm_smccc_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, 0, timer_s * SPM_TIMER_HZ, 0, 0, 0, 0, &res);
 	n = mt6739_sleep_mask_gic(saved);
 	t0 = __arch_counter_get_cntvct();
@@ -106,6 +114,7 @@ static int mt6739_sleep_enter(suspend_state_t state)
 	if (!cpu_pdn)
 		arm_smccc_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_SUSPEND_FINISH, 0, 0, 0, 0, 0, 0, &res);
 	mt6739_sleep_restore_gic(saved, n);
+	arm_smccc_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 0, 0, 0, 0, 0, 0, &res);
 
 	/* The ATF logs the wake reason (spm_wake_reason) in its log buffer. */
 	pr_info("mt6739-sleep: slept %llu ms, rc %d\n",
