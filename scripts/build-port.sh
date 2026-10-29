@@ -21,6 +21,7 @@ kmake() { make -C "$KSRC" O="$KOUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- 
 done
 hook() { grep -qF "$2" "$KSRC/$1" || echo "$2" >> "$KSRC/$1"; }
 hook drivers/soc/mediatek/Makefile 'obj-$(CONFIG_ARCH_MEDIATEK) += mt6739-rdma-scanout.o'
+hook drivers/soc/mediatek/Makefile 'obj-$(CONFIG_SUSPEND) += mt6739-sleep.o'
 hook drivers/video/backlight/Makefile 'obj-$(CONFIG_BACKLIGHT_CLASS_DEVICE) += aw9364-backlight.o'
 hook drivers/iio/accel/Makefile 'obj-$(CONFIG_IIO) += bma423.o'
 hook drivers/bluetooth/Makefile 'obj-$(CONFIG_BT) += btmt6739.o'

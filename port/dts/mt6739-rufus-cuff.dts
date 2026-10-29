@@ -234,6 +234,13 @@
 		 * the DT already has a reservation there.
 		 */
 	};
+
+	/* Suspend through the ATF's SPM firmware (mt6739-sleep.c): SPM registers, SPM IRQ0. */
+	sleep@10006000 {
+		compatible = "mediatek,mt6739-sleep";
+		reg = <0 0x10006000 0 0x1000>;
+		interrupts = <GIC_SPI 177 IRQ_TYPE_LEVEL_LOW>;
+	};
 };
 
 &mt6357_pmic {
