@@ -8,6 +8,7 @@
  */
 #define _GNU_SOURCE
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1330,4 +1331,37 @@ int rufus_tick(long t, int kids)
 		r |= RUFUS_REDRAW;
 	}
 	return r;
+}
+
+/*
+ * How long the watch may suspend before rufus_tick has something to do: 0 while something
+ * rings or pairing is open, -1 with nothing due. (kids: the alarm only, as in rufus_tick.)
+ */
+long rufus_sleep_ms(long t, int kids)
+{
+	long ms = LONG_MAX;
+
+	if (al_ringing || (!kids && timer_ring) || t < pair_until)
+		return 0;
+	if (al_snooze_until)
+		ms = al_snooze_until - t;
+	if (!kids && timer_run && timer_end - t < ms)
+		ms = timer_end - t;
+	if (al_on) {
+		time_t now = time(NULL);
+		struct tm tm;
+
+		localtime_r(&now, &tm);
+		if (tm.tm_year + 1900 >= 2026) {
+			tm.tm_hour = al_h;
+			tm.tm_min = al_m;
+			tm.tm_sec = 0;
+			time_t next = mktime(&tm);
+			if (next <= now)
+				next += 24 * 3600;
+			if ((next - now) * 1000 < ms)
+				ms = (next - now) * 1000;
+		}
+	}
+	return ms == LONG_MAX ? -1 : ms < 0 ? 0 : ms;
 }

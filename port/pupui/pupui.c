@@ -42,10 +42,11 @@ static int fb_sw;			/* framebuffer stride in pixels */
 
 /* ---------------------------------------------------------------- time, misc */
 
+/* Boot time counts the time suspended too, so timers, snoozes and timeouts run on in sleep. */
 long now_ms(void)
 {
 	struct timespec t;
-	clock_gettime(CLOCK_MONOTONIC, &t);
+	clock_gettime(CLOCK_BOOTTIME, &t);
 	return t.tv_sec * 1000L + t.tv_nsec / 1000000L;
 }
 
@@ -252,6 +253,69 @@ void sysfs_write_int(const char *path, int v)
 }
 
 #define SCREEN_TIMEOUT_MS 60000
+#define SLEEP_AFTER_MS 3000	/* awake after the screen goes off, or a wake, for events to arrive */
+#define SLEEP_MIN_MS 5000	/* anything due sooner is waited for awake */
+#define SLEEP_MAX_S 1800	/* wake at least this often (rufus-battery-watch) */
+#define NO_SLEEP "/run/no-sleep"	/* touch to keep the watch awake (SSH, debugging) */
+#define CHG_ONLINE "/sys/class/power_supply/mt6357-charger/online"
+#define CHG_INHIBIT "/sys/module/mt6357_charger/parameters/inhibit"
+#define WAKEALARM "/sys/class/rtc/rtc0/wakealarm"
+
+static int sysfs_write_str(const char *path, const char *s)
+{
+	int fd = open(path, O_WRONLY), ok;
+
+	if (fd < 0)
+		return 0;
+	ok = write(fd, s, strlen(s)) == (ssize_t)strlen(s);
+	close(fd);
+	return ok;
+}
+
+/* Not on the charger: the kernel switches charging off in suspend (unless inhibited anyway). */
+static int may_sleep(void)
+{
+	char c = 'N';
+	FILE *f;
+
+	if (access(NO_SLEEP, F_OK) == 0)
+		return 0;
+	if (sysfs_read_int(CHG_ONLINE) != 1)
+		return 1;
+	f = fopen(CHG_INHIBIT, "r");
+	if (f) {
+		c = fgetc(f);
+		fclose(f);
+	}
+	return c == 'Y';
+}
+
+/*
+ * Suspend to RAM for at most @ms (-1: SLEEP_MAX_S) on an RTC alarm; the power key, a charger
+ * plugged in, Bluetooth or Wi-Fi wake it sooner (and Wi-Fi sometimes for nothing: the caller
+ * just sleeps again). Writing back the wakeup count makes the kernel refuse the suspend if a
+ * wakeup event arrived since it was read.
+ */
+static void sleep_for(long ms)
+{
+	long s = ms < 0 || ms / 1000 >= SLEEP_MAX_S ? SLEEP_MAX_S : (ms + 999) / 1000;
+	char count[24], when[24];
+	int fd = open("/sys/power/wakeup_count", O_RDONLY), n;
+
+	if (fd < 0)
+		return;
+	n = read(fd, count, sizeof(count) - 1);
+	close(fd);
+	if (n <= 0)
+		return;
+	count[n] = 0;
+	snprintf(when, sizeof(when), "+%ld", s);
+	if (!sysfs_write_str("/sys/power/wakeup_count", count) ||
+	    !sysfs_write_str(WAKEALARM, "0") || !sysfs_write_str(WAKEALARM, when))
+		return;
+	sysfs_write_str("/sys/power/state", "mem");
+	sysfs_write_str(WAKEALARM, "0");
+}
 
 /* The PMIC's AUXADC among the IIO devices (the accelerometer is one too). */
 static int adc_read_bat(void)
@@ -882,6 +946,8 @@ int main(int argc, char **argv)
 
 	int screen_on = 1;
 	long back_down = 0, power_down = 0, last_batt = now_ms(), last_frame = 0, last_input = now_ms();
+	long awake_since = now_ms();
+	int wifi_down = 0;
 	int dirty = 1, ev_pending = EV_NONE, combo = 0;
 
 	saved_bl = sysfs_read_int(BL);
@@ -1023,6 +1089,25 @@ int main(int argc, char **argv)
 				settings_done();
 			dirty |= r && scene == RUFUS;
 		}
+
+		/*
+		 * Screen off and nothing due soon: suspend until something is. Wi-Fi is down
+		 * meanwhile: the few seconds between sleeps are too short for it to reconnect, and
+		 * a half-done reconnect makes its firmware wake the watch ~26 s into each sleep
+		 * (measured). Notifications come over Bluetooth.
+		 */
+		if (!screen_on && t - last_input >= SLEEP_AFTER_MS && t - awake_since >= SLEEP_AFTER_MS) {
+			long ms = rufus_sleep_ms(t, kids);
+
+			if ((ms < 0 || ms >= SLEEP_MIN_MS) && may_sleep()) {
+				if (!wifi_down)
+					wifi_down = !system("ip link set wlan0 down");
+				sleep_for(ms);
+			}
+			awake_since = now_ms();
+		}
+		if (screen_on && wifi_down)
+			wifi_down = !!system("ip link set wlan0 up");
 
 		if (scene == POP)
 			pop_tick(t);

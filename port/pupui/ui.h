@@ -49,6 +49,7 @@ void rufus_back(void);
 int rufus_tick(long t, int kids);	/* RUFUS_REDRAW | RUFUS_WAKE | RUFUS_SHOW */
 void rufus_alarm_input(void);	/* a button or touch in Kids mode: stop a ringing alarm */
 int rufus_animating(void);
+long rufus_sleep_ms(long t, int kids);	/* how long the watch may sleep: 0 none, -1 no limit */
 void rufus_bench(void);		/* pupui --bench: time each view's drawing */
 double bench_ms(void (*fn)(void), int n);
 
