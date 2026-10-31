@@ -32,6 +32,7 @@
 #define MTK_SIP_POWER_DOWN_CORE		0xc2000218
 #define MTK_SIP_SPM_SUSPEND_ARGS	0xc200021a
 #define MTK_SIP_SPM_IRQ0_HANDLER	0xc200021c
+#define MTK_SIP_SPM_PWR_CTRL_ARGS	0xc200021e
 #define MTK_SIP_SPM_LEGACY_SLEEP	0xc200021f
 #define MTK_SIP_SPM_DUMMY_READ		0xc2000225
 #define MTK_SIP_SPM_ARGS		0xc2000228
@@ -39,6 +40,8 @@
 #define SPM_ARGS_SUSPEND_FINISH		3
 #define SPM_ARGS_PCM_WDT		8
 #define PCM_WDT_TIMEOUT_S		30
+#define SPM_PWR_CTRL_SUSPEND		17
+#define PWR_SPM_F26M_REQ		34
 #define PCM_FLAG_DIS_CPU_PDN		BIT(0)
 #define MT6739_PSCI_SUSPEND		0x01010005
 #define SPM_TIMER_HZ			32768
@@ -101,6 +104,13 @@ static int mt6739_sleep_enter(suspend_state_t state)
 	 * after the resume (measured), so it is disarmed after, as the vendor's spm_go_to_sleep().
 	 */
 	arm_smccc_smc(MTK_SIP_SPM_ARGS, SPM_ARGS_PCM_WDT, 1, PCM_WDT_TIMEOUT_S, 0, 0, 0, 0, &res);
+	/*
+	 * Keep the 26 MHz clock requested through the sleep. ~800 test sleeps with it woke. Added
+	 * for a sleep that never woke and was not reset by the PCM watchdog, but that hang came
+	 * back with it too and was the PSCI idle states (see the DTS); not tested without it since.
+	 */
+	arm_smccc_smc(MTK_SIP_SPM_PWR_CTRL_ARGS, SPM_PWR_CTRL_SUSPEND, PWR_SPM_F26M_REQ, 1,
+		      0, 0, 0, 0, &res);
 	arm_smccc_smc(MTK_SIP_SPM_SUSPEND_ARGS, flags, 0, timer_s * SPM_TIMER_HZ, 0, 0, 0, 0, &res);
 	n = mt6739_sleep_mask_gic(saved);
 	t0 = __arch_counter_get_cntvct();
