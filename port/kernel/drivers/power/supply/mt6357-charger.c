@@ -74,6 +74,8 @@ static const u32 cv_vth_uv[] = {
 #define FGADC_CON1_SW_CTRL		GENMASK(3, 0)
 #define FGADC_CON1_SW_READ_PRE		1
 #define FGADC_CON1_SW_CLEAR		8
+/* OFFSET_RST, TIME_RST, CHARGE_RST: while set, the coulomb counter stays at 0. */
+#define FGADC_CON1_RST			GENMASK(10, 8)
 #define FGADC_CON1_LATCHDATA_ST		BIT(15)
 
 /*
@@ -197,8 +199,19 @@ static int mt6357_fg_latch_read(struct mt6357_charger *chg, unsigned int reg,
 	unsigned int sta, i;
 	int ret;
 
-	ret = regmap_update_bits(chg->regmap, MT6357_FGADC_CON1, FGADC_CON1_SW_CTRL,
-				 FGADC_CON1_SW_READ_PRE);
+	/*
+	 * The vendor's gauge resets the counter and releases it with its next read, so a reboot in
+	 * between leaves it held at 0 (found at 0x0700 after a boot from Android). Release it on
+	 * every read, as the vendor does.
+	 */
+	ret = regmap_read(chg->regmap, MT6357_FGADC_CON1, &sta);
+	if (ret)
+		return ret;
+	if (sta & FGADC_CON1_RST)
+		dev_warn_once(chg->dev, "coulomb counter held in reset (FGADC_CON1 %#x), releasing\n",
+			      sta);
+	ret = regmap_update_bits(chg->regmap, MT6357_FGADC_CON1,
+				 FGADC_CON1_RST | FGADC_CON1_SW_CTRL, FGADC_CON1_SW_READ_PRE);
 	if (ret)
 		return ret;
 	ret = regmap_read_poll_timeout(chg->regmap, MT6357_FGADC_CON1, sta,
