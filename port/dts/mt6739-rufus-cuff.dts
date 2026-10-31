@@ -303,23 +303,31 @@
  * CPU frequency scaling (mediatek-cpufreq, OPP table in mt6739.dtsi): the cores run from
  * VPROC with VSRAM_PROC, as on the AGM M7. The table's voltages are at or above this
  * watch's stock DVFS table (checked in Android, /proc/cpufreq).
+ *
+ * No PSCI idle states (cpu_off, cluster_off): with them, sleeps (mt6739-sleep) hung, not woken
+ * even by the SPM timer, also when they were paused only during each sleep; with them off for
+ * good, 20 of 20 and the ~800 earlier test sleeps woke (measured). Idle is WFI.
  */
 &cpu0 {
+	/delete-property/ cpu-idle-states;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
 };
 
 &cpu1 {
+	/delete-property/ cpu-idle-states;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
 };
 
 &cpu2 {
+	/delete-property/ cpu-idle-states;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
 };
 
 &cpu3 {
+	/delete-property/ cpu-idle-states;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
 };
