@@ -12,6 +12,8 @@
 #include <linux/mfd/mt6397/core.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
+#include <linux/pm_wakeup.h>
 #include <linux/power_supply.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
@@ -649,6 +651,14 @@ static int mt6357_charger_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to request IRQ\n");
 	chg->irq = irq;
+
+	/* Charging is off in suspend, so plugging in wakes the watch to start it. */
+	ret = devm_device_init_wakeup(dev);
+	if (ret)
+		return ret;
+	ret = devm_pm_set_wake_irq(dev, irq);
+	if (ret)
+		return ret;
 
 	chg->online = mt6357_charger_online(chg);
 	chg->online_since = jiffies;
