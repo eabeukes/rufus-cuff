@@ -18,6 +18,8 @@ void blit(const struct image *im, int x, int y);
 int text_width(const struct font *f, const char *s);
 void text(const struct font *f, int x, int y, uint32_t c, const char *s);
 void text_c(const struct font *f, int cx, int y, uint32_t c, const char *s);
+void star(int cx, int cy, int r, uint32_t c);
+void home_button(void);		/* the games' round home button, top left */
 void present(void);
 
 int sysfs_read_int(const char *path);
@@ -69,6 +71,14 @@ void adult_back(void);		/* second button: up one level */
 int adult_tick(long t);		/* nonzero: redraw */
 int adult_fd(void);		/* terminal output to poll, or -1 */
 void adult_io(void);		/* adult_fd() is readable */
+
+/* maze.c: Pup Maze, a Kids mode game. */
+void maze_start(void);
+void maze_tick(long t);
+void maze_draw(long t);
+void maze_touch(int x, int y, long t);
+int maze_animating(void);
+void maze_tile(int x, int y);	/* the home tile's picture, 144x118 */
 
 /* theme.c: replacement pups, badges, names and home picture, if installed. */
 void theme_load(void);

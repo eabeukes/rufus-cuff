@@ -11,7 +11,7 @@
  *          to Android). Lower (KEY_POWER, short press) = screen off/on. In Kids mode, holding
  *          both 3 s and answering a sum (grownup.c) returns to RufusOS.
  * Starts in RufusOS, or in Kids mode when START_KIDS exists (Settings > Start in Kids).
- * Games: Pup Pop (tap the pups), Badge Match (memory), Paint, Pup Parade.
+ * Games: Pup Pop (tap the pups), Badge Match (memory), Paint, Pup Parade, Pup Maze (maze.c).
  * All built-in artwork is original (gen_assets.py); theme.c can replace it.
  */
 #include <dirent.h>
@@ -157,7 +157,7 @@ static void sky_and_grass(void)
 	}
 }
 
-static void star(int cx, int cy, int r, uint32_t c)
+void star(int cx, int cy, int r, uint32_t c)
 {
 	/* five-pointed star by scanning a polygon test */
 	double px[10], py[10];
@@ -178,7 +178,7 @@ static void star(int cx, int cy, int r, uint32_t c)
 		}
 }
 
-static void home_button(void)
+void home_button(void)
 {
 	fill_circle(42, 42, 32, 0xffffffff);
 	fill_circle(42, 42, 28, 0xffe22626);
@@ -419,15 +419,17 @@ static void input_open(void)
 
 /* ---------------------------------------------------------------- scenes */
 
-enum scene { HOME, POP, MATCH, PAINT, PARADE, ADULT, RUFUS };
+enum scene { HOME, POP, MATCH, PAINT, PARADE, MAZE, ADULT, RUFUS };
 static enum scene scene = HOME;
 static int kids;		/* Kids mode: the pups, locked behind the sum gate */
 static int battery = -1;
 
-/* Home: four tiles. */
+/* Home: four pup tiles, and Pup Maze's at the foot of the lookout. */
 static const struct { const char *label; int pup; } tiles[4] = {
 	{ "Pup Pop", 0 }, { "Match", 1 }, { "Paint", 2 }, { "Parade", 3 },
 };
+#define MAZE_TILE_X 468
+#define MAZE_TILE_Y 284
 
 static void tile_rect(int i, int *x, int *y)
 {
@@ -450,6 +452,11 @@ static void draw_home(void)
 		blit(pups_small[tiles[i].pup], x + 52, y + 16);
 		text_c(&font_s, x + 100, y + 132, 0xffffff, tiles[i].label);
 	}
+	fill_rrect(MAZE_TILE_X + 4, MAZE_TILE_Y + 6, 156, 172, 22, 0xff303030);
+	fill_rrect(MAZE_TILE_X, MAZE_TILE_Y, 156, 172, 22, 0xff965ad2);
+	fill_rrect(MAZE_TILE_X + 6, MAZE_TILE_Y + 6, 144, 118, 16, 0xffffffff);
+	maze_tile(MAZE_TILE_X + 6, MAZE_TILE_Y + 6);
+	text_c(&font_s, MAZE_TILE_X + 78, MAZE_TILE_Y + 132, 0xffffff, "Maze");
 }
 
 /* Pup Pop: tap the pup before it hides. */
@@ -788,6 +795,8 @@ static void enter(enum scene s)
 		match_start();
 	else if (s == PARADE)
 		parade_start();
+	else if (s == MAZE)
+		maze_start();
 	else if (s == ADULT)
 		adult_enter();
 	else if (s == RUFUS)
@@ -879,6 +888,8 @@ static void handle_touch(int ev, int x, int y, long t)
 			if (x >= tx && x < tx + 200 && y >= ty && y < ty + 172)
 				enter((enum scene)(POP + i));
 		}
+		if (x >= MAZE_TILE_X && x < MAZE_TILE_X + 156 && y >= MAZE_TILE_Y && y < MAZE_TILE_Y + 172)
+			enter(MAZE);
 		break;
 	case POP:
 		if (ev == EV_DOWN)
@@ -894,6 +905,10 @@ static void handle_touch(int ev, int x, int y, long t)
 	case PARADE:
 		if (ev == EV_DOWN)
 			parade_touch(x, y, t);
+		break;
+	case MAZE:
+		if (ev == EV_DOWN)
+			maze_touch(x, y, t);
 		break;
 	case ADULT:
 		adult_touch(ev, x, y, t);
@@ -957,7 +972,7 @@ int main(int argc, char **argv)
 	for (;;) {
 		long t = now_ms();
 		int animating = scene == POP || scene == PARADE || (scene == MATCH && mt.second >= 0) ||
-				(scene == RUFUS && rufus_animating());
+				(scene == MAZE && maze_animating()) || (scene == RUFUS && rufus_animating());
 		int timeout = !screen_on ? 1000 : animating ? 33 : 500;
 		int n = in_n;
 
@@ -1115,6 +1130,8 @@ int main(int argc, char **argv)
 			match_tick(t);
 		if (scene == PARADE)
 			parade_tick(t);
+		if (scene == MAZE)
+			maze_tick(t);
 		if (scene == ADULT)
 			dirty |= adult_tick(t);
 
@@ -1126,6 +1143,7 @@ int main(int argc, char **argv)
 		case MATCH: draw_match(); break;
 		case PAINT: draw_paint(); break;
 		case PARADE: draw_parade(t); break;
+		case MAZE: maze_draw(t); break;
 		case ADULT: adult_draw(); break;
 		case RUFUS: rufus_draw(t); break;
 		}

@@ -113,6 +113,32 @@ def pup_image(size, team, fur, ears, sym, happy=True):
     return img.resize((size, size), Image.LANCZOS)
 
 
+def rory_image(size):
+    """Rory, the pups' boy leader in Pup Maze: brown hair, blue shirt, red vest."""
+    S = size * SS
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    c, hr, hy = S / 2, S * 0.24, S * 0.36
+    hair = (120, 72, 36)
+    d.rounded_rectangle([c - hr * 1.15, hy + hr * 0.8, c + hr * 1.15, S * 0.98], radius=hr * 0.5,
+                        fill=(70, 140, 230))
+    for sx in (-1, 1):  # vest
+        d.polygon([(c + sx * hr * 1.15, hy + hr), (c + sx * hr * 0.25, hy + hr), (c + sx * hr * 0.1, S * 0.98),
+                   (c + sx * hr * 1.15, S * 0.98)], fill=(226, 38, 38))
+    badge(d, c - hr * 0.62, hy + hr * 1.7, hr * 0.28, (38, 84, 200), "star")
+    d.ellipse([c - hr, hy - hr, c + hr, hy + hr], fill=(244, 200, 160))
+    d.chord([c - hr * 1.08, hy - hr * 1.2, c + hr * 1.08, hy + hr * 0.4], 180, 360, fill=hair)
+    for k in range(5):  # spiky fringe
+        x = c - hr * 0.9 + k * hr * 0.45
+        d.polygon([(x - hr * 0.25, hy - hr * 0.45), (x + hr * 0.25, hy - hr * 0.45), (x, hy - hr * 0.05)], fill=hair)
+    for sx in (-1, 1):
+        ex, ey, er = c + sx * hr * 0.38, hy + hr * 0.1, hr * 0.13
+        d.ellipse([ex - er, ey - er, ex + er, ey + er], fill=(50, 34, 24))
+    d.arc([c - hr * 0.4, hy + hr * 0.15, c + hr * 0.4, hy + hr * 0.65], 20, 160, fill=(120, 50, 40),
+          width=max(2, int(hr * 0.09)))
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def badge_image(size, team, sym):
     S = size * SS
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -261,6 +287,7 @@ def main(out):
         parts.append(c_img(f"pupsmall{i}", pup_image(96, team, fur, ears, sym)))
         parts.append(c_img(f"badge{i}", badge_image(100, team, sym)))
     parts.append(c_img("home_bg", home_scene(640, 480)))
+    parts.append(c_img("rory", rory_image(150)))
     # font_s/m/l: the kid UI; font_t: grown-up text; font_mono: the terminal.
     parts.append(c_font("font_s", 26))
     parts.append(c_font("font_m", 40))
@@ -271,6 +298,7 @@ def main(out):
     for kind, colour in ICONS:
         parts.append(c_img(f"icon_{kind}", icon_image(ICON_SIZE, kind, colour)))
     header.append("extern const struct image " + ", ".join(f"icon_{k}" for k, _ in ICONS) + ";\n")
+    header.append("extern const struct image rory;\n")
     header.append("extern const struct font font_s, font_m, font_l, font_t, font_mono, font_xl;\n"
                   "/* Pointers, so a theme (theme.c) can replace them. */\n"
                   "extern const struct image *home_img, *pups[6], *pups_small[6], *badges[6];\n"
