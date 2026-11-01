@@ -440,6 +440,9 @@ static void tile_rect(int i, int *x, int *y)
 static void draw_home(void)
 {
 	blit(home_img, 0, 0);
+	/* On a banner: white on the white clouds could not be read. */
+	int tw = text_width(&font_m, "Pup Rescue HQ");
+	fill_rrect(230 - tw / 2 - 22, 12, tw + 44, 62, 26, 0xff2654c8);
 	text_c(&font_m, 230, 22, 0xffffff, "Pup Rescue HQ");
 	battery_icon(546, 18, battery);
 	clock_in_tower();
