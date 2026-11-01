@@ -971,6 +971,8 @@ int main(int argc, char **argv)
 	saved_bl = sysfs_read_int(BL);
 	if (saved_bl <= 0)
 		saved_bl = 12;
+	/* The screen starts on: light it, as a restart can find it switched off by the last run. */
+	sysfs_write_int(BL, saved_bl);
 
 	for (;;) {
 		long t = now_ms();
