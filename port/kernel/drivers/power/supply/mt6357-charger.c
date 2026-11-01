@@ -392,9 +392,17 @@ static void mt6357_charge_update(struct mt6357_charger *chg, bool vbat_ok)
 			 chg->temp_decic / 10, abs(chg->temp_decic % 10),
 			 chg->full ? ", full" : "");
 
-	if (kick_wdt)
+	/*
+	 * The timeout is set again with each kick: it was found back at its shortest (CON9 0x40)
+	 * after a suspend and a replug, and the watchdog then switched charging off between polls.
+	 */
+	if (kick_wdt) {
+		regmap_update_bits(chg->regmap, MT6357_CHR_CON9,
+				   CHR_CON9_CHRWDT_TD | CHR_CON9_CHRWDT_EN,
+				   FIELD_PREP(CHR_CON9_CHRWDT_TD, CHRWDT_TD_32S) | CHR_CON9_CHRWDT_EN);
 		regmap_write_bits(chg->regmap, MT6357_CHR_CON9, CHR_CON9_CHRWDT_WR,
 				  CHR_CON9_CHRWDT_WR);
+	}
 	if (want && mt6357_charge_enable(chg))
 		want = false;
 	if (!want)
